@@ -1,0 +1,53 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CudaCompile Include="kernel.cu" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="aes_cuda.hpp" />
+    <ClInclude Include="blake2b_cuda.hpp" />
+    <ClInclude Include="blake2\endian.h">
+      <Filter>Reference\Blake2b</Filter>
+    </ClInclude>
+    <ClInclude Include="blake2\blake2.h">
+      <Filter>Reference\Blake2b</Filter>
+    </ClInclude>
+    <ClInclude Include="blake2\blake2-impl.h">
+      <Filter>Reference\Blake2b</Filter>
+    </ClInclude>
+    <ClInclude Include="blake2\blamka-round-ref.h">
+      <Filter>Reference\Blake2b</Filter>
+    </ClInclude>
+    <ClInclude Include="aes\hashAes1Rx4.hpp">
+      <Filter>Reference\AES</Filter>
+    </ClInclude>
+    <ClInclude Include="aes\softAes.h">
+      <Filter>Reference\AES</Filter>
+    </ClInclude>
+    <ClInclude Include="aes\intrinPortable.h">
+      <Filter>Reference\AES</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Reference">
+      <UniqueIdentifier>{0f0d4939-913e-4253-818d-dad142a2d0c0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Reference\Blake2b">
+      <UniqueIdentifier>{8934ad7a-324e-4cb3-8b0b-b0cca7d078ad}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Reference\AES">
+      <UniqueIdentifier>{de8384fe-00d9-4f8f-86d6-3d1aa4882cca}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="blake2\blake2b.c">
+      <Filter>Reference\Blake2b</Filter>
+    </ClCompile>
+    <ClCompile Include="aes\hashAes1Rx4.cpp">
+      <Filter>Reference\AES</Filter>
+    </ClCompile>
+    <ClCompile Include="aes\softAes.cpp">
+      <Filter>Reference\AES</Filter>
+    </ClCompile>
+  </ItemGroup>
+</Project>
