@@ -8,13 +8,13 @@ it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-RandomX is distributed in the hope that it will be useful,
+RandomX CUDA is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with RandomX.  If not, see<http://www.gnu.org/licenses/>.
+along with RandomX CUDA.  If not, see<http://www.gnu.org/licenses/>.
 */
 
 #include "cuda_runtime.h"
@@ -23,8 +23,10 @@ along with RandomX.  If not, see<http://www.gnu.org/licenses/>.
 #include <stdio.h>
 #include <chrono>
 #include <vector>
-#include "blake2/blake2.h"
-#include "aes/hashAes1Rx4.hpp"
+#include <thread>
+#include "../RandomX/src/blake2/blake2.h"
+#include "../RandomX/src/aes_hash.hpp"
+#include "../RandomX/src/randomx.h"
 
 #include "blake2b_cuda.hpp"
 #include "aes_cuda.hpp"
@@ -71,6 +73,12 @@ int main(int argc, char** argv)
 }
 
 using namespace std::chrono;
+
+struct randomx_dataset {
+	virtual ~randomx_dataset() = 0;
+	virtual void allocate() = 0;
+	uint8_t* memory = nullptr;
+};
 
 static uint8_t blockTemplate[] = {
 		0x07, 0x07, 0xf7, 0xa4, 0xf0, 0xd6, 0x05, 0xb3, 0x03, 0x26, 0x08, 0x16, 0xba, 0x3f, 0x10, 0x90, 0x2e, 0x1a, 0x14,
@@ -120,11 +128,11 @@ bool test_mining()
 	// There should be enough GPU memory for the 2 GB dataset, 32 scratchpads and 64 MB for everything else
 	if (free_mem <= DATASET_SIZE + (32U * SCRATCHPAD_SIZE) + (64U << 20))
 	{
-		fprintf(stderr, "Not enough free GPU memory!", free_mem >> 20);
+		fprintf(stderr, "Not enough free GPU memory!");
 		return false;
 	}
 
-	const size_t batch_size = (((free_mem - DATASET_SIZE - (64U << 20)) / SCRATCHPAD_SIZE) / 32) * 32;
+	const uint32_t batch_size = static_cast<uint32_t>((((free_mem - DATASET_SIZE - (64U << 20)) / SCRATCHPAD_SIZE) / 32) * 32);
 
 	GPUPtr dataset_gpu(DATASET_SIZE);
 	if (!dataset_gpu)
@@ -135,7 +143,33 @@ bool test_mining()
 
 	printf("Allocated 2 GB dataset\n");
 
-	// TODO: initialize dataset
+	printf("Initializing dataset...");
+	{
+		const char mySeed[] = "RandomX example seed";
+
+		randomx_cache *myCache = randomx_alloc_cache((randomx_flags)(RANDOMX_FLAG_JIT));
+		randomx_init_cache(myCache, mySeed, sizeof mySeed);
+		randomx_dataset *myDataset = randomx_alloc_dataset(RANDOMX_FLAG_DEFAULT);
+
+		time_point<steady_clock> t1 = high_resolution_clock::now();
+
+		std::vector<std::thread> threads;
+		for (uint32_t i = 0, n = std::thread::hardware_concurrency(); i < n; ++i)
+			threads.emplace_back(randomx_init_dataset, myDataset, myCache, (i * RANDOMX_DATASET_ITEMS) / n, ((i + 1) * RANDOMX_DATASET_ITEMS) / n - (i * RANDOMX_DATASET_ITEMS) / n);
+
+		for (auto& t : threads)
+			t.join();
+
+		randomx_release_cache(myCache);
+
+		cudaStatus = cudaMemcpy(dataset_gpu, myDataset->memory, DATASET_SIZE, cudaMemcpyHostToDevice);
+		if (cudaStatus != cudaSuccess) {
+			fprintf(stderr, "Failed to copy dataset to GPU: %s\n", cudaGetErrorString(cudaStatus));
+			return false;
+		}
+
+		printf("done in %.3f seconds\n", duration_cast<nanoseconds>(high_resolution_clock::now() - t1).count() / 1e9);
+	}
 
 	GPUPtr scratchpads_gpu(batch_size * SCRATCHPAD_SIZE);
 	if (!scratchpads_gpu)
@@ -144,7 +178,7 @@ bool test_mining()
 		return false;
 	}
 
-	printf("Allocated %zu scratchpads\n", batch_size);
+	printf("Allocated %u scratchpads\n", batch_size);
 
 	GPUPtr hashes_gpu(batch_size * HASH_SIZE);
 	if (!hashes_gpu)
@@ -200,16 +234,13 @@ bool test_mining()
 
 	for (uint32_t nonce = 0, k = 0; nonce < 0xFFFFFFFFUL; nonce += batch_size, ++k)
 	{
-		if ((k % 16) == 0)
+		time_point<steady_clock> cur_time = high_resolution_clock::now();
+		if (k > 0)
 		{
-			time_point<steady_clock> cur_time = high_resolution_clock::now();
-			if (k > 0)
-			{
-				const double dt = duration_cast<nanoseconds>(cur_time - prev_time).count() / 1e9;
-				printf("%.0f h/s        \r", batch_size * 16 / dt);
-			}
-			prev_time = cur_time;
+			const double dt = duration_cast<nanoseconds>(cur_time - prev_time).count() / 1e9;
+			printf("%.0f h/s        \r", batch_size / dt);
 		}
+		prev_time = cur_time;
 
 		blake2b_initial_hash<sizeof(blockTemplate)><<<batch_size / 32, 32>>>(hashes_gpu, blockTemplate_gpu, nonce);
 		cudaStatus = cudaGetLastError();
@@ -234,9 +265,7 @@ bool test_mining()
 				return false;
 			}
 
-			initGroupA_registers<<<batch_size / 32, 32>>>(programs_gpu, registers_gpu);
-
-			// TODO: execute VM
+			execute_vm<<<batch_size / 16, 16 * 2>>>(programs_gpu, registers_gpu, scratchpads_gpu, dataset_gpu, batch_size);
 
 			if (i == PROGRAM_COUNT - 1)
 			{

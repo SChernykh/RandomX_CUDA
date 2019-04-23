@@ -81,21 +81,14 @@
     <CudaCompile Include="kernel.cu" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="aes\hashAes1Rx4.hpp" />
-    <ClInclude Include="aes\intrinPortable.h" />
-    <ClInclude Include="aes\softAes.h" />
     <ClInclude Include="aes_cuda.hpp" />
     <ClInclude Include="blake2b_cuda.hpp" />
-    <ClInclude Include="blake2\blake2-impl.h" />
-    <ClInclude Include="blake2\blake2.h" />
-    <ClInclude Include="blake2\blamka-round-ref.h" />
-    <ClInclude Include="blake2\endian.h" />
     <ClInclude Include="randomx_cuda.hpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="aes\hashAes1Rx4.cpp" />
-    <ClCompile Include="aes\softAes.cpp" />
-    <ClCompile Include="blake2\blake2b.c" />
+    <ProjectReference Include="..\RandomX\vcxproj\randomx.vcxproj">
+      <Project>{3346a4ad-c438-4324-8b77-47a16452954b}</Project>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

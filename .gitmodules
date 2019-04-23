@@ -1,0 +1,3 @@
+[submodule "RandomX"]
+	path = RandomX
+	url = https://github.com/SChernykh/RandomX/
