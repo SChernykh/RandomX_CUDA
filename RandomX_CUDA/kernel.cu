@@ -1,3 +1,22 @@
+/*
+Copyright (c) 2019 SChernykh
+
+This file is part of RandomX CUDA.
+
+RandomX CUDA is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+RandomX is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with RandomX.  If not, see<http://www.gnu.org/licenses/>.
+*/
+
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include <stdint.h>
@@ -9,6 +28,7 @@
 
 #include "blake2b_cuda.hpp"
 #include "aes_cuda.hpp"
+#include "randomx_cuda.hpp"
 
 bool test_mining();
 void tests();
@@ -51,13 +71,6 @@ int main(int argc, char** argv)
 }
 
 using namespace std::chrono;
-
-constexpr size_t DATASET_SIZE = 1U << 31;
-constexpr size_t SCRATCHPAD_SIZE = 1U << 21;
-constexpr size_t HASH_SIZE = 64;
-constexpr size_t PROGRAM_SIZE = 128 + 2048;
-constexpr size_t PROGRAM_COUNT = 8;
-constexpr size_t REGISTERS_SIZE = 256;
 
 static uint8_t blockTemplate[] = {
 		0x07, 0x07, 0xf7, 0xa4, 0xf0, 0xd6, 0x05, 0xb3, 0x03, 0x26, 0x08, 0x16, 0xba, 0x3f, 0x10, 0x90, 0x2e, 0x1a, 0x14,
@@ -221,7 +234,8 @@ bool test_mining()
 				return false;
 			}
 
-			// TODO: initialize VM
+			initGroupA_registers<<<batch_size / 32, 32>>>(programs_gpu, registers_gpu);
+
 			// TODO: execute VM
 
 			if (i == PROGRAM_COUNT - 1)
@@ -232,13 +246,22 @@ bool test_mining()
 					fprintf(stderr, "hashAes1Rx4 launch failed: %s\n", cudaGetErrorString(cudaStatus));
 					return false;
 				}
-			}
 
-			blake2b_hash_registers<REGISTERS_SIZE><<<batch_size / 32, 32>>>(hashes_gpu, registers_gpu);
-			cudaStatus = cudaGetLastError();
-			if (cudaStatus != cudaSuccess) {
-				fprintf(stderr, "blake2b_hash_registers launch failed: %s\n", cudaGetErrorString(cudaStatus));
-				return false;
+				blake2b_hash_registers<REGISTERS_SIZE, 32><<<batch_size / 32, 32>>>(hashes_gpu, registers_gpu);
+				cudaStatus = cudaGetLastError();
+				if (cudaStatus != cudaSuccess) {
+					fprintf(stderr, "blake2b_hash_registers launch failed: %s\n", cudaGetErrorString(cudaStatus));
+					return false;
+				}
+			}
+			else
+			{
+				blake2b_hash_registers<REGISTERS_SIZE, 64><<<batch_size / 32, 32>>>(hashes_gpu, registers_gpu);
+				cudaStatus = cudaGetLastError();
+				if (cudaStatus != cudaSuccess) {
+					fprintf(stderr, "blake2b_hash_registers launch failed: %s\n", cudaGetErrorString(cudaStatus));
+					return false;
+				}
 			}
 		}
 
@@ -261,7 +284,7 @@ void tests()
 	std::vector<uint8_t> scratchpads(SCRATCHPAD_SIZE * NUM_SCRATCHPADS_TEST * 2);
 	std::vector<uint8_t> programs(PROGRAM_SIZE * NUM_SCRATCHPADS_TEST * 2);
 
-    uint64_t hash[NUM_SCRATCHPADS_TEST * 8] = {};
+	uint64_t hash[NUM_SCRATCHPADS_TEST * 8] = {};
 	uint64_t hash2[NUM_SCRATCHPADS_TEST * 8] = {};
 
 	uint8_t registers[NUM_SCRATCHPADS_TEST * REGISTERS_SIZE] = {};
@@ -279,9 +302,9 @@ void tests()
 		return;
 	}
 
-    GPUPtr nonce_gpu(sizeof(uint64_t));
-    if (!nonce_gpu) {
-        fprintf(stderr, "cudaMalloc failed!");
+	GPUPtr nonce_gpu(sizeof(uint64_t));
+	if (!nonce_gpu) {
+		fprintf(stderr, "cudaMalloc failed!");
 		return;
 	}
 
@@ -461,7 +484,35 @@ void tests()
 	}
 
 	{
-		blake2b_hash_registers<REGISTERS_SIZE><<<NUM_SCRATCHPADS_TEST / 32, 32>>>(hash_gpu, registers_gpu);
+		blake2b_hash_registers<REGISTERS_SIZE, 32><<<NUM_SCRATCHPADS_TEST / 32, 32>>>(hash_gpu, registers_gpu);
+		cudaStatus = cudaGetLastError();
+		if (cudaStatus != cudaSuccess) {
+			fprintf(stderr, "blake2b_hash_registers launch failed: %s\n", cudaGetErrorString(cudaStatus));
+			return;
+		}
+
+		cudaStatus = cudaMemcpy(&hash, hash_gpu, sizeof(hash), cudaMemcpyDeviceToHost);
+		if (cudaStatus != cudaSuccess) {
+			fprintf(stderr, "cudaMemcpy failed!");
+			return;
+		}
+
+		for (uint32_t i = 0; i < NUM_SCRATCHPADS_TEST; ++i)
+		{
+			blake2b(hash2 + i * 4, 32, registers2 + i * REGISTERS_SIZE, REGISTERS_SIZE, nullptr, 0);
+		}
+
+		if (memcmp(hash, hash2, NUM_SCRATCHPADS_TEST * 32) != 0)
+		{
+			fprintf(stderr, "blake2b_hash_registers (32 byte hash) test failed!");
+			return;
+		}
+
+		printf("blake2b_hash_registers (32 byte hash) test passed\n");
+	}
+
+	{
+		blake2b_hash_registers<REGISTERS_SIZE, 64><<<NUM_SCRATCHPADS_TEST / 32, 32>>>(hash_gpu, registers_gpu);
 		cudaStatus = cudaGetLastError();
 		if (cudaStatus != cudaSuccess) {
 			fprintf(stderr, "blake2b_hash_registers launch failed: %s\n", cudaGetErrorString(cudaStatus));
@@ -479,15 +530,15 @@ void tests()
 			blake2b(hash2 + i * 8, 64, registers2 + i * REGISTERS_SIZE, REGISTERS_SIZE, nullptr, 0);
 		}
 
-		if (memcmp(hash, hash2, sizeof(hash)) != 0)
+		if (memcmp(hash, hash2, NUM_SCRATCHPADS_TEST * 64) != 0)
 		{
-			fprintf(stderr, "blake2b_hash_registers test failed!");
+			fprintf(stderr, "blake2b_hash_registers (64 byte hash) test failed!");
 			return;
 		}
 
-		printf("blake2b_hash_registers test passed\n");
+		printf("blake2b_hash_registers (64 byte hash) test passed\n");
 	}
-	
+
 	time_point<steady_clock> start_time = high_resolution_clock::now();
 
 	for (int i = 0; i < 100; ++i)
@@ -558,51 +609,51 @@ void tests()
 
 	start_time = high_resolution_clock::now();
 
-    for (uint64_t start_nonce = 0; start_nonce < BLAKE2B_STEP * 100; start_nonce += BLAKE2B_STEP)
-    {
-        printf("Benchmarking blake2b_512_single_block %llu/100", (start_nonce + BLAKE2B_STEP) / BLAKE2B_STEP);
-        if (start_nonce > 0)
-        {
-            const double dt = duration_cast<nanoseconds>(high_resolution_clock::now() - start_time).count() / 1e9;
-            printf(", %.2f MH/s", start_nonce / dt / 1e6);
-        }
-        printf("\r");
+	for (uint64_t start_nonce = 0; start_nonce < BLAKE2B_STEP * 100; start_nonce += BLAKE2B_STEP)
+	{
+		printf("Benchmarking blake2b_512_single_block %llu/100", (start_nonce + BLAKE2B_STEP) / BLAKE2B_STEP);
+		if (start_nonce > 0)
+		{
+			const double dt = duration_cast<nanoseconds>(high_resolution_clock::now() - start_time).count() / 1e9;
+			printf(", %.2f MH/s", start_nonce / dt / 1e6);
+		}
+		printf("\r");
 
-        cudaStatus = cudaMemset(nonce_gpu, 0, sizeof(uint64_t));
-        if (cudaStatus != cudaSuccess) {
-            fprintf(stderr, "cudaMemcpy failed!");
+		cudaStatus = cudaMemset(nonce_gpu, 0, sizeof(uint64_t));
+		if (cudaStatus != cudaSuccess) {
+			fprintf(stderr, "cudaMemcpy failed!");
 			return;
 		}
 
 		void* out = nonce_gpu;
 		blake2b_512_single_block_bench<sizeof(blockTemplate)><<<BLAKE2B_STEP / 256, 256>>>((uint64_t*) out, block_template_gpu, start_nonce);
 
-        cudaStatus = cudaGetLastError();
-        if (cudaStatus != cudaSuccess) {
-            fprintf(stderr, "blake2b_512_single_block_bench launch failed: %s\n", cudaGetErrorString(cudaStatus));
+		cudaStatus = cudaGetLastError();
+		if (cudaStatus != cudaSuccess) {
+			fprintf(stderr, "blake2b_512_single_block_bench launch failed: %s\n", cudaGetErrorString(cudaStatus));
 			return;
 		}
 
-        cudaStatus = cudaDeviceSynchronize();
-        if (cudaStatus != cudaSuccess) {
-            fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching blake2b_512_single_block_bench!\n", cudaStatus);
+		cudaStatus = cudaDeviceSynchronize();
+		if (cudaStatus != cudaSuccess) {
+			fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching blake2b_512_single_block_bench!\n", cudaStatus);
 			return;
 		}
 
-        uint64_t nonce;
-        cudaStatus = cudaMemcpy(&nonce, nonce_gpu, sizeof(nonce), cudaMemcpyDeviceToHost);
-        if (cudaStatus != cudaSuccess) {
-            fprintf(stderr, "cudaMemcpy failed!");
+		uint64_t nonce;
+		cudaStatus = cudaMemcpy(&nonce, nonce_gpu, sizeof(nonce), cudaMemcpyDeviceToHost);
+		if (cudaStatus != cudaSuccess) {
+			fprintf(stderr, "cudaMemcpy failed!");
 			return;
 		}
 
-        if (nonce)
-        {
-            *(uint64_t*)(blockTemplate) = nonce;
-            blake2b(hash, 64, blockTemplate, sizeof(blockTemplate), nullptr, 0);
-            printf("nonce = %llu, hash[7] = %016llx                  \n", nonce, hash[7]);
-        }
-    }
+		if (nonce)
+		{
+			*(uint64_t*)(blockTemplate) = nonce;
+			blake2b(hash, 64, blockTemplate, sizeof(blockTemplate), nullptr, 0);
+			printf("nonce = %llu, hash[7] = %016llx                  \n", nonce, hash[7]);
+		}
+	}
 	printf("\n");
 
 	start_time = high_resolution_clock::now();

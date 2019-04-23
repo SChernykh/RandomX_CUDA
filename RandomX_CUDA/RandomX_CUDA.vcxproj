@@ -90,6 +90,7 @@
     <ClInclude Include="blake2\blake2.h" />
     <ClInclude Include="blake2\blamka-round-ref.h" />
     <ClInclude Include="blake2\endian.h" />
+    <ClInclude Include="randomx_cuda.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="aes\hashAes1Rx4.cpp" />

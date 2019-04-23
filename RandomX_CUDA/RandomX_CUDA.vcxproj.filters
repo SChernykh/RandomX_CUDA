@@ -27,6 +27,7 @@
     <ClInclude Include="aes\intrinPortable.h">
       <Filter>Reference\AES</Filter>
     </ClInclude>
+    <ClInclude Include="randomx_cuda.hpp" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Reference">

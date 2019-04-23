@@ -1,5 +1,24 @@
 #pragma once
 
+/*
+Copyright (c) 2019 SChernykh
+
+This file is part of RandomX CUDA.
+
+RandomX CUDA is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+RandomX is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with RandomX.  If not, see<http://www.gnu.org/licenses/>.
+*/
+
 static __constant__ const uint8_t blake2b_sigma[12 * 16] = {
 	0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
 	14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3,
@@ -119,7 +138,7 @@ __device__ void blake2b_512_process_single_block(uint64_t *h, const uint64_t* m)
 template<uint32_t in_len> struct M_Mask { enum : uint64_t { value = uint64_t(-1) >> (64 - in_len * 8) }; };
 template<> struct M_Mask<0> { enum : uint64_t { value = 0 }; };
 
-template<uint32_t in_len>
+template<uint32_t in_len, uint32_t out_len>
 __device__ void blake2b_512_process_double_block(uint64_t *out, uint64_t* m, const uint64_t* in)
 {
 	static_assert(in_len > 128, "Double block must be larger than 128 bytes");
@@ -127,14 +146,14 @@ __device__ void blake2b_512_process_double_block(uint64_t *out, uint64_t* m, con
 
 	uint64_t v[16] =
 	{
-		Blake2b_IV::iv0 ^ 0x01010040ul, Blake2b_IV::iv1, Blake2b_IV::iv2, Blake2b_IV::iv3, Blake2b_IV::iv4      , Blake2b_IV::iv5, Blake2b_IV::iv6, Blake2b_IV::iv7,
+		Blake2b_IV::iv0 ^ (0x01010000ul | out_len), Blake2b_IV::iv1, Blake2b_IV::iv2, Blake2b_IV::iv3, Blake2b_IV::iv4      , Blake2b_IV::iv5, Blake2b_IV::iv6, Blake2b_IV::iv7,
 		Blake2b_IV::iv0               , Blake2b_IV::iv1, Blake2b_IV::iv2, Blake2b_IV::iv3, Blake2b_IV::iv4 ^ 128, Blake2b_IV::iv5, Blake2b_IV::iv6, Blake2b_IV::iv7,
 	};
 
 	BLAKE2B_ROUNDS();
 
 	uint64_t h[8];
-	v[0] = h[0] = v[0] ^ v[8] ^ Blake2b_IV::iv0 ^ 0x01010040ul;
+	v[0] = h[0] = v[0] ^ v[8] ^ Blake2b_IV::iv0 ^ (0x01010000ul | out_len);
 	v[1] = h[1] = v[1] ^ v[9] ^ Blake2b_IV::iv1;
 	v[2] = h[2] = v[2] ^ v[10] ^ Blake2b_IV::iv2;
 	v[3] = h[3] = v[3] ^ v[11] ^ Blake2b_IV::iv3;
@@ -173,14 +192,14 @@ __device__ void blake2b_512_process_double_block(uint64_t *out, uint64_t* m, con
 
 	BLAKE2B_ROUNDS();
 
-	out[0] = h[0] ^ v[0] ^ v[8];
-	out[1] = h[1] ^ v[1] ^ v[9];
-	out[2] = h[2] ^ v[2] ^ v[10];
-	out[3] = h[3] ^ v[3] ^ v[11];
-	out[4] = h[4] ^ v[4] ^ v[12];
-	out[5] = h[5] ^ v[5] ^ v[13];
-	out[6] = h[6] ^ v[6] ^ v[14];
-	out[7] = h[7] ^ v[7] ^ v[15];
+	if (out_len >  0) out[0] = h[0] ^ v[0] ^ v[8];
+	if (out_len >  8) out[1] = h[1] ^ v[1] ^ v[9];
+	if (out_len > 16) out[2] = h[2] ^ v[2] ^ v[10];
+	if (out_len > 24) out[3] = h[3] ^ v[3] ^ v[11];
+	if (out_len > 32) out[4] = h[4] ^ v[4] ^ v[12];
+	if (out_len > 40) out[5] = h[5] ^ v[5] ^ v[13];
+	if (out_len > 48) out[6] = h[6] ^ v[6] ^ v[14];
+	if (out_len > 56) out[7] = h[7] ^ v[7] ^ v[15];
 }
 
 #undef G
@@ -229,7 +248,7 @@ __global__ void blake2b_512_double_block_bench(uint64_t *out, const void* in, ui
 	uint64_t m[16] = { start_nonce + blockIdx.x * blockDim.x + threadIdx.x, p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11], p[12], p[13], p[14], p[15] };
 
 	uint64_t hash[8];
-	blake2b_512_process_double_block<in_len>(hash, m, p);
+	blake2b_512_process_double_block<in_len, 64>(hash, m, p);
 
 	if (((uint32_t*)hash)[15] == 0)
 		*out = start_nonce + blockIdx.x * blockDim.x + threadIdx.x;
@@ -281,13 +300,13 @@ __global__ void blake2b_initial_hash(void *out, const void* blockTemplate, uint3
 	t[7] = hash[7];
 }
 
-template<uint32_t registers_len>
+template<uint32_t registers_len, uint32_t out_len>
 __global__ void blake2b_hash_registers(void *out, const void* in)
 {
 	const uint32_t global_index = blockIdx.x * blockDim.x + threadIdx.x;
 	const uint64_t* p = ((const uint64_t*) in) + global_index * (registers_len / sizeof(uint64_t));
-	uint64_t* h = ((uint64_t*) out) + global_index * (64 / sizeof(uint64_t));
+	uint64_t* h = ((uint64_t*) out) + global_index * (out_len / sizeof(uint64_t));
 
 	uint64_t m[16] = { p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11], p[12], p[13], p[14], p[15] };
-	blake2b_512_process_double_block<registers_len>(h, m, p);
+	blake2b_512_process_double_block<registers_len, out_len>(h, m, p);
 }
