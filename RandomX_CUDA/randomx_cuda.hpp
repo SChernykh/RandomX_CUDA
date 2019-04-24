@@ -115,22 +115,28 @@ __global__ void __launch_bounds__(32) execute_vm(const void* entropy_data, void*
 		spAddr0 &= ScratchpadL3Mask64;
 		spAddr1 &= ScratchpadL3Mask64;
 
-		uint64_t* p = (uint64_t*)(scratchpad + spAddr0 * batch_size);
-		R[sub + 0] ^= p[sub + 0];
-		R[sub + 2] ^= p[sub + 2];
-		R[sub + 4] ^= p[sub + 4];
-		R[sub + 6] ^= p[sub + 6];
+		ulonglong4 global_mem_data = *(ulonglong4*)(scratchpad + spAddr0 * batch_size + sub * 32);
 
-		int32_t* q = (int32_t*)(scratchpad + spAddr1 * batch_size);
-		F[sub + 0] = __int2double_rn(q[sub + 0]);
-		F[sub + 2] = __int2double_rn(q[sub + 2]);
-		F[sub + 4] = __int2double_rn(q[sub + 4]);
-		F[sub + 6] = __int2double_rn(q[sub + 6]);
+		uint64_t* r = R + sub * 4;
+		r[0] ^= global_mem_data.x;
+		r[1] ^= global_mem_data.y;
+		r[2] ^= global_mem_data.z;
+		r[3] ^= global_mem_data.w;
 
-		E[sub + 0] = load_E_group(q[sub +  8], eMask);
-		E[sub + 2] = load_E_group(q[sub + 10], eMask);
-		E[sub + 4] = load_E_group(q[sub + 12], eMask);
-		E[sub + 6] = load_E_group(q[sub + 14], eMask);
+		global_mem_data = *(ulonglong4*)(scratchpad + spAddr1 * batch_size + sub * 32);
+		int32_t* q = (int32_t*) &global_mem_data;
+
+		double* f = F + sub * 4;
+		f[0] = __int2double_rn(q[0]);
+		f[1] = __int2double_rn(q[1]);
+		f[2] = __int2double_rn(q[2]);
+		f[3] = __int2double_rn(q[3]);
+
+		double* e = E + sub * 4;
+		e[0] = load_E_group(q[4], eMask);
+		e[1] = load_E_group(q[5], eMask);
+		e[2] = load_E_group(q[6], eMask);
+		e[3] = load_E_group(q[7], eMask);
 
 		__syncthreads();
 
@@ -139,27 +145,27 @@ __global__ void __launch_bounds__(32) execute_vm(const void* entropy_data, void*
 		mx ^= R[readReg2] ^ R[readReg3];
 		mx &= CacheLineAlignMask;
 
-		const uint64_t* datasetLine = (const uint64_t*)(((const uint8_t*) dataset) + ma);
-		R[sub + 0] ^= datasetLine[sub + 0];
-		R[sub + 2] ^= datasetLine[sub + 2];
-		R[sub + 4] ^= datasetLine[sub + 4];
-		R[sub + 6] ^= datasetLine[sub + 6];
+		global_mem_data = *(const ulonglong4*)(((const uint8_t*) dataset) + ma + sub * 32);
+		r[0] ^= global_mem_data.x;
+		r[1] ^= global_mem_data.y;
+		r[2] ^= global_mem_data.z;
+		r[3] ^= global_mem_data.w;
 
 		const uint32_t tmp = ma;
 		ma = mx;
 		mx = tmp;
 
-		p = (uint64_t*)(scratchpad + spAddr1 * batch_size);
-		p[sub + 0] = R[sub + 0];
-		p[sub + 2] = R[sub + 2];
-		p[sub + 4] = R[sub + 4];
-		p[sub + 6] = R[sub + 6];
+		global_mem_data.x = r[0];
+		global_mem_data.y = r[1];
+		global_mem_data.z = r[2];
+		global_mem_data.w = r[3];
+		*(ulonglong4*)(scratchpad + spAddr1 * batch_size + sub * 32) = global_mem_data;
 
-		p = (uint64_t*)(scratchpad + spAddr0 * batch_size);
-		p[sub + 0] = bit_cast<uint64_t>(F[sub + 0]) ^ bit_cast<uint64_t>(E[sub + 0]);
-		p[sub + 2] = bit_cast<uint64_t>(F[sub + 2]) ^ bit_cast<uint64_t>(E[sub + 2]);
-		p[sub + 4] = bit_cast<uint64_t>(F[sub + 4]) ^ bit_cast<uint64_t>(E[sub + 4]);
-		p[sub + 6] = bit_cast<uint64_t>(F[sub + 6]) ^ bit_cast<uint64_t>(E[sub + 6]);
+		global_mem_data.x = bit_cast<uint64_t>(f[0]) ^ bit_cast<uint64_t>(e[0]);
+		global_mem_data.y = bit_cast<uint64_t>(f[1]) ^ bit_cast<uint64_t>(e[1]);
+		global_mem_data.z = bit_cast<uint64_t>(f[2]) ^ bit_cast<uint64_t>(e[2]);
+		global_mem_data.w = bit_cast<uint64_t>(f[3]) ^ bit_cast<uint64_t>(e[3]);
+		*(ulonglong4*)(scratchpad + spAddr0 * batch_size + sub * 32) = global_mem_data;
 
 		spAddr0 = 0;
 		spAddr1 = 0;
