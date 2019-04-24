@@ -146,7 +146,7 @@ bool test_mining(bool validate)
 
 		randomx_cache *myCache = randomx_alloc_cache((randomx_flags)(RANDOMX_FLAG_JIT));
 		randomx_init_cache(myCache, mySeed, sizeof mySeed);
-		myDataset = randomx_alloc_dataset(RANDOMX_FLAG_DEFAULT);
+		myDataset = randomx_alloc_dataset(RANDOMX_FLAG_LARGE_PAGES);
 
 		time_point<steady_clock> t1 = high_resolution_clock::now();
 

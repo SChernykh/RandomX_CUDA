@@ -122,8 +122,11 @@ __global__ void __launch_bounds__(32) execute_vm(const void* entropy_data, void*
 		spAddr0 &= ScratchpadL3Mask64;
 		spAddr1 &= ScratchpadL3Mask64;
 
-		ulonglong2* p0 = (ulonglong2*)(scratchpad + uint64_t(spAddr0) * batch_size + sub * 16);
-		ulonglong2* p1 = (ulonglong2*)(scratchpad + uint64_t(spAddr1) * batch_size + sub * 16);
+		uint64_t offset1, offset2;
+		asm("mul.wide.u32 %0,%2,%4;\n\tmul.wide.u32 %1,%3,%4;" : "=l"(offset1), "=l"(offset2) : "r"(spAddr0), "r"(spAddr1), "r"(batch_size));
+
+		ulonglong2* p0 = (ulonglong2*)(scratchpad + offset1 + sub * 16);
+		ulonglong2* p1 = (ulonglong2*)(scratchpad + offset2 + sub * 16);
 
 		ulonglong2 global_mem_data = *p0;
 
