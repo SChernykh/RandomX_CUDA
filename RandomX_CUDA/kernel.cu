@@ -33,6 +33,8 @@ along with RandomX CUDA.  If not, see<http://www.gnu.org/licenses/>.
 #include "aes_cuda.hpp"
 #include "randomx_cuda.hpp"
 
+#define CPU_VALIDATION 0
+
 bool test_mining();
 void tests();
 
@@ -139,12 +141,14 @@ bool test_mining()
 	printf("Allocated 2 GB dataset\n");
 
 	printf("Initializing dataset...");
+
+	randomx_dataset *myDataset;
 	{
 		const char mySeed[] = "RandomX example seed";
 
 		randomx_cache *myCache = randomx_alloc_cache((randomx_flags)(RANDOMX_FLAG_JIT));
 		randomx_init_cache(myCache, mySeed, sizeof mySeed);
-		randomx_dataset *myDataset = randomx_alloc_dataset(RANDOMX_FLAG_DEFAULT);
+		myDataset = randomx_alloc_dataset(RANDOMX_FLAG_DEFAULT);
 
 		time_point<steady_clock> t1 = high_resolution_clock::now();
 
@@ -294,6 +298,29 @@ bool test_mining()
 			fprintf(stderr, "cudaDeviceSynchronize returned error code %d!\n", cudaStatus);
 			return false;
 		}
+
+#if CPU_VALIDATION == 1
+		std::vector<uint8_t> hashes, hashes_check;
+		hashes.resize(batch_size * 32);
+		hashes_check.resize(batch_size * 32);
+
+		cudaMemcpy(hashes.data(), hashes_gpu, batch_size * 32, cudaMemcpyDeviceToHost);
+
+		randomx_vm *myMachine = randomx_create_vm((randomx_flags)(RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_HARD_AES), nullptr, myDataset);
+		for (uint32_t i = 0; i < batch_size; ++i)
+		{
+			*(uint32_t*)(blockTemplate + 39) = nonce + i;
+
+			randomx_calculate_hash(myMachine, blockTemplate, sizeof(blockTemplate), (hashes_check.data() + i * 32));
+		}
+		randomx_destroy_vm(myMachine);
+
+		if (memcmp(hashes.data(), hashes_check.data(), batch_size * 32) != 0)
+		{
+			fprintf(stderr, "CPU validation error\n");
+			return false;
+		}
+#endif
 	}
 
 	return true;
