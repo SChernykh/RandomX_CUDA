@@ -260,7 +260,7 @@ bool test_mining()
 				return false;
 			}
 
-			execute_vm<<<batch_size / 16, 16 * 2>>>(programs_gpu, registers_gpu, scratchpads_gpu, dataset_gpu, batch_size);
+			execute_vm<<<batch_size / 8, 8 * 4>>>(programs_gpu, registers_gpu, scratchpads_gpu, dataset_gpu, batch_size);
 
 			if (i == PROGRAM_COUNT - 1)
 			{
