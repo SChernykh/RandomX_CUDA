@@ -26,7 +26,6 @@ along with RandomX CUDA.  If not, see<http://www.gnu.org/licenses/>.
 #include <thread>
 #include "../RandomX/src/blake2/blake2.h"
 #include "../RandomX/src/aes_hash.hpp"
-#include "../RandomX/src/dataset.hpp"
 #include "../RandomX/src/randomx.h"
 
 #include "blake2b_cuda.hpp"
@@ -121,15 +120,15 @@ bool test_mining(bool validate)
 	printf("%zu MB GPU memory total\n", total_mem >> 20);
 
 	// There should be enough GPU memory for the 2 GB dataset, 32 scratchpads and 64 MB for everything else
-	if (free_mem <= DATASET_SIZE + (32U * SCRATCHPAD_SIZE) + (64U << 20))
+	if (free_mem <= randomx_dataset_item_count() * RANDOMX_DATASET_ITEM_SIZE + (32U * SCRATCHPAD_SIZE) + (64U << 20))
 	{
 		fprintf(stderr, "Not enough free GPU memory!");
 		return false;
 	}
 
-	const uint32_t batch_size = static_cast<uint32_t>((((free_mem - DATASET_SIZE - (64U << 20)) / SCRATCHPAD_SIZE) / 32) * 32);
+	const uint32_t batch_size = static_cast<uint32_t>((((free_mem - randomx_dataset_item_count() * RANDOMX_DATASET_ITEM_SIZE - (64U << 20)) / SCRATCHPAD_SIZE) / 32) * 32);
 
-	GPUPtr dataset_gpu(DATASET_SIZE);
+	GPUPtr dataset_gpu(randomx_dataset_item_count() * RANDOMX_DATASET_ITEM_SIZE);
 	if (!dataset_gpu)
 	{
 		fprintf(stderr, "Failed to allocate GPU memory for dataset!");
@@ -152,14 +151,14 @@ bool test_mining(bool validate)
 
 		std::vector<std::thread> threads;
 		for (uint32_t i = 0, n = std::thread::hardware_concurrency(); i < n; ++i)
-			threads.emplace_back(randomx_init_dataset, myDataset, myCache, (i * RANDOMX_DATASET_ITEMS) / n, ((i + 1) * RANDOMX_DATASET_ITEMS) / n - (i * RANDOMX_DATASET_ITEMS) / n);
+			threads.emplace_back(randomx_init_dataset, myDataset, myCache, (i * randomx_dataset_item_count()) / n, ((i + 1) * randomx_dataset_item_count()) / n - (i * randomx_dataset_item_count()) / n);
 
 		for (auto& t : threads)
 			t.join();
 
 		randomx_release_cache(myCache);
 
-		cudaStatus = cudaMemcpy(dataset_gpu, myDataset->memory, DATASET_SIZE, cudaMemcpyHostToDevice);
+		cudaStatus = cudaMemcpy(dataset_gpu, randomx_get_dataset_memory(myDataset), randomx_dataset_item_count() * RANDOMX_DATASET_ITEM_SIZE, cudaMemcpyHostToDevice);
 		if (cudaStatus != cudaSuccess) {
 			fprintf(stderr, "Failed to copy dataset to GPU: %s\n", cudaGetErrorString(cudaStatus));
 			return false;
