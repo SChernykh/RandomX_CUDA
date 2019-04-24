@@ -33,17 +33,15 @@ along with RandomX CUDA.  If not, see<http://www.gnu.org/licenses/>.
 #include "aes_cuda.hpp"
 #include "randomx_cuda.hpp"
 
-#define CPU_VALIDATION 0
-
-bool test_mining();
+bool test_mining(bool validate);
 void tests();
 
 int main(int argc, char** argv)
 {
 	if (argc < 3)
 	{
-		printf("Usage: RandomX_CUDA.exe --[mine|test] device_id\n");
-		printf("Examples:\nRandomX_CUDA.exe --test 0\nRandomX_CUDA.exe --mine 0\n");
+		printf("Usage: RandomX_CUDA.exe --[mine|test] device_id [--validate]\n");
+		printf("Examples:\nRandomX_CUDA.exe --test 0\nRandomX_CUDA.exe --mine 0 --validate\n");
 		return 0;
 	}
 
@@ -62,7 +60,7 @@ int main(int argc, char** argv)
 	//	cudaSetDeviceFlags(flags | cudaDeviceScheduleBlockingSync);
 
 	if (strcmp(argv[1], "--mine") == 0)
-		test_mining();
+		test_mining((argc > 3) && (strcmp(argv[3], "--validate") == 0));
 	else if (strcmp(argv[1], "--test") == 0)
 		tests();
 
@@ -104,7 +102,7 @@ private:
 	void* p;
 };
 
-bool test_mining()
+bool test_mining(bool validate)
 {
 	cudaError_t cudaStatus;
 
@@ -299,28 +297,30 @@ bool test_mining()
 			return false;
 		}
 
-#if CPU_VALIDATION == 1
-		std::vector<uint8_t> hashes, hashes_check;
-		hashes.resize(batch_size * 32);
-		hashes_check.resize(batch_size * 32);
 
-		cudaMemcpy(hashes.data(), hashes_gpu, batch_size * 32, cudaMemcpyDeviceToHost);
-
-		randomx_vm *myMachine = randomx_create_vm((randomx_flags)(RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_HARD_AES), nullptr, myDataset);
-		for (uint32_t i = 0; i < batch_size; ++i)
+		if (validate)
 		{
-			*(uint32_t*)(blockTemplate + 39) = nonce + i;
+			std::vector<uint8_t> hashes, hashes_check;
+			hashes.resize(batch_size * 32);
+			hashes_check.resize(batch_size * 32);
 
-			randomx_calculate_hash(myMachine, blockTemplate, sizeof(blockTemplate), (hashes_check.data() + i * 32));
-		}
-		randomx_destroy_vm(myMachine);
+			cudaMemcpy(hashes.data(), hashes_gpu, batch_size * 32, cudaMemcpyDeviceToHost);
 
-		if (memcmp(hashes.data(), hashes_check.data(), batch_size * 32) != 0)
-		{
-			fprintf(stderr, "CPU validation error\n");
-			return false;
+			randomx_vm *myMachine = randomx_create_vm((randomx_flags)(RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_HARD_AES), nullptr, myDataset);
+			for (uint32_t i = 0; i < batch_size; ++i)
+			{
+				*(uint32_t*)(blockTemplate + 39) = nonce + i;
+
+				randomx_calculate_hash(myMachine, blockTemplate, sizeof(blockTemplate), (hashes_check.data() + i * 32));
+			}
+			randomx_destroy_vm(myMachine);
+
+			if (memcmp(hashes.data(), hashes_check.data(), batch_size * 32) != 0)
+			{
+				fprintf(stderr, "CPU validation error\n");
+				return false;
+			}
 		}
-#endif
 	}
 
 	return true;
