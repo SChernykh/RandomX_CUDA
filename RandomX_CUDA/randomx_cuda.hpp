@@ -64,6 +64,46 @@ __device__ double load_F_E_groups(int value, uint64_t andMask, uint64_t orMask)
 	return __longlong_as_double(static_cast<int64_t>(x));
 }
 
+__device__ void test_memory_access(uint64_t* r, uint8_t* scratchpad, uint32_t batch_size)
+{
+	uint32_t x = static_cast<uint32_t>(r[0]);
+	uint64_t y = r[1];
+
+	#pragma unroll
+	for (int i = 0; i < 39; ++i)
+	{
+		x = x * 0x08088405U + 1;
+
+		uint32_t mask = 16320;
+		if (x < 0x58000000U) mask = 262080;
+		if (x < 0x20000000U) mask = 2097088;
+
+		uint32_t addr = x & mask;
+		uint64_t offset;
+		asm("mul.wide.u32 %0,%1,%2;" : "=l"(offset) : "r"(addr), "r"(batch_size));
+
+		y ^= *(uint64_t*)(scratchpad + offset + (x & 56));
+	}
+
+	#pragma unroll
+	for (int i = 0; i < 16; ++i)
+	{
+		x = x * 0x8088405 + 1;
+
+		uint32_t mask = 16320;
+		if (x < 0x58000000U) mask = 262080;
+		if (x < 0x20000000U) mask = 2097088;
+
+		uint32_t addr = x & mask;
+		uint64_t offset;
+		asm("mul.wide.u32 %0,%1,%2;" : "=l"(offset) : "r"(addr), "r"(batch_size));
+
+		*(uint64_t*)(scratchpad + offset + (x & 56)) = x;
+	}
+
+	r[1] = y;
+}
+
 __global__ void __launch_bounds__(32) execute_vm(const void* entropy_data, void* registers, void* scratchpads, const void* dataset, uint32_t batch_size)
 {
 	__shared__ uint64_t registers_buf[32 * 8];
@@ -145,6 +185,7 @@ __global__ void __launch_bounds__(32) execute_vm(const void* entropy_data, void*
 		__syncthreads();
 
 		// TODO: execute byte code
+		//if (sub == 0) test_memory_access(r, scratchpad, batch_size);
 
 		mx ^= *readReg2 ^ *readReg3;
 		mx &= CacheLineAlignMask;

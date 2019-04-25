@@ -234,7 +234,10 @@ bool test_mining(bool validate)
 		if (k > 0)
 		{
 			const double dt = duration_cast<nanoseconds>(cur_time - prev_time).count() / 1e9;
-			printf("%.0f h/s        \r", batch_size / dt);
+			if (validate)
+				printf("%u hashes passed\r", nonce);
+			else
+				printf("%.0f h/s        \r", batch_size / dt);
 		}
 		prev_time = cur_time;
 
