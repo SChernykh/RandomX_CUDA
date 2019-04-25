@@ -142,20 +142,20 @@ __device__ void load_buffer(T (&dst_buf)[N], const void* src_buf)
 
 __global__ void __launch_bounds__(32) execute_vm(void* vm_states, void* scratchpads, const void* dataset, uint32_t batch_size)
 {
-	// 8 hashes per warp, 16 KB shared memory for VM states
-	__shared__ uint64_t vm_states_local[(VM_STATE_SIZE * 8) / sizeof(uint64_t)];
+	// 4 hashes per warp, 8 KB shared memory for VM states
+	__shared__ uint64_t vm_states_local[(VM_STATE_SIZE * 4) / sizeof(uint64_t)];
 
 	load_buffer(vm_states_local, vm_states);
 	__syncthreads();
 
-	uint64_t* R = vm_states_local + (threadIdx.x / 4) * VM_STATE_SIZE / sizeof(uint64_t);
+	uint64_t* R = vm_states_local + (threadIdx.x / 8) * VM_STATE_SIZE / sizeof(uint64_t);
 	double* F = (double*)(R + 8);
 	double* E = (double*)(R + 16);
 	double* A = (double*)(R + 24);
 
 	const uint32_t global_index = blockIdx.x * blockDim.x + threadIdx.x;
-	const uint32_t idx = global_index / 4;
-	const uint32_t sub = global_index % 4;
+	const uint32_t idx = global_index / 8;
+	const uint32_t sub = global_index % 8;
 
 	uint32_t ma = ((uint32_t*)(R + 16))[0];
 	uint32_t mx = ((uint32_t*)(R + 16))[1];
@@ -173,11 +173,11 @@ __global__ void __launch_bounds__(32) execute_vm(void* vm_states, void* scratchp
 
 	uint8_t* scratchpad = ((uint8_t*) scratchpads) + idx * 64;
 
-	const bool f_group = (sub < 2);
+	const bool f_group = (sub < 4);
 
-	double* fe = f_group ? (F + sub * 4) : (E + (sub - 2) * 4);
-	double* f = F + sub * 2;
-	double* e = E + sub * 2;
+	double* fe = f_group ? (F + sub * 2) : (E + (sub - 4) * 2);
+	double* f = F + sub;
+	double* e = E + sub;
 
 	const uint64_t andMask = f_group ? uint64_t(-1) : ((1ULL << 52) - 1);
 	const uint64_t orMask1 = f_group ? 0 : eMask.x;
@@ -194,22 +194,17 @@ __global__ void __launch_bounds__(32) execute_vm(void* vm_states, void* scratchp
 		uint64_t offset1, offset2;
 		asm("mul.wide.u32 %0,%2,%4;\n\tmul.wide.u32 %1,%3,%4;" : "=l"(offset1), "=l"(offset2) : "r"(spAddr0), "r"(spAddr1), "r"(batch_size));
 
-		ulonglong2* p0 = (ulonglong2*)(scratchpad + offset1 + sub * 16);
-		ulonglong2* p1 = (ulonglong2*)(scratchpad + offset2 + sub * 16);
+		uint64_t* p0 = (uint64_t*)(scratchpad + offset1 + sub * 8);
+		uint64_t* p1 = (uint64_t*)(scratchpad + offset2 + sub * 8);
 
-		ulonglong2 global_mem_data = *p0;
+		uint64_t* r = R + sub;
+		*r ^= *p0;
 
-		uint64_t* r = R + sub * 2;
-		r[0] ^= global_mem_data.x;
-		r[1] ^= global_mem_data.y;
-
-		global_mem_data = *p1;
+		uint64_t global_mem_data = *p1;
 		int32_t* q = (int32_t*) &global_mem_data;
 
 		fe[0] = load_F_E_groups(q[0], andMask, orMask1);
 		fe[1] = load_F_E_groups(q[1], andMask, orMask2);
-		fe[2] = load_F_E_groups(q[2], andMask, orMask1);
-		fe[3] = load_F_E_groups(q[3], andMask, orMask2);
 
 		__syncthreads();
 
@@ -219,37 +214,23 @@ __global__ void __launch_bounds__(32) execute_vm(void* vm_states, void* scratchp
 		mx ^= *readReg2 ^ *readReg3;
 		mx &= CacheLineAlignMask;
 
-		global_mem_data = *(const ulonglong2*)(((const uint8_t*) dataset) + ma + sub * 16);
-		r[0] ^= global_mem_data.x;
-		r[1] ^= global_mem_data.y;
+		const uint64_t next_r = *r ^ *(const uint64_t*)(((const uint8_t*) dataset) + ma + sub * 8);
+		*r = next_r;
 
-		const uint32_t tmp = ma;
+		uint32_t tmp = ma;
 		ma = mx;
 		mx = tmp;
 
-		global_mem_data.x = r[0];
-		global_mem_data.y = r[1];
-		*p1 = global_mem_data;
-
-		global_mem_data.x = bit_cast<uint64_t>(f[0]) ^ bit_cast<uint64_t>(e[0]);
-		global_mem_data.y = bit_cast<uint64_t>(f[1]) ^ bit_cast<uint64_t>(e[1]);
-		*p0 = global_mem_data;
+		*p1 = next_r;
+		*p0 = bit_cast<uint64_t>(f[0]) ^ bit_cast<uint64_t>(e[0]);
 
 		spAddr0 = 0;
 		spAddr1 = 0;
 	}
 
 	uint64_t* p = ((uint64_t*) vm_states) + idx * (VM_STATE_SIZE / sizeof(uint64_t));
-
-	p[sub + 0] = R[sub + 0];
-	p[sub + 4] = R[sub + 4];
-
-	p[sub +  8] = bit_cast<uint64_t>(F[sub + 0]) ^ bit_cast<uint64_t>(E[sub + 0]);
-	p[sub + 12] = bit_cast<uint64_t>(F[sub + 4]) ^ bit_cast<uint64_t>(E[sub + 4]);
-
-	p[sub + 16] = bit_cast<uint64_t>(E[sub + 0]);
-	p[sub + 20] = bit_cast<uint64_t>(E[sub + 4]);
-
-	p[sub + 24] = bit_cast<uint64_t>(A[sub + 0]);
-	p[sub + 28] = bit_cast<uint64_t>(A[sub + 4]);
+	p[sub] = R[sub];
+	p[sub +  8] = bit_cast<uint64_t>(F[sub]) ^ bit_cast<uint64_t>(E[sub]);
+	p[sub + 16] = bit_cast<uint64_t>(E[sub]);
+	p[sub + 24] = bit_cast<uint64_t>(A[sub]);
 }

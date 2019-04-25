@@ -217,6 +217,13 @@ bool test_mining(bool validate)
 		return false;
 	}
 
+	cudaStatus = cudaFuncSetCacheConfig(execute_vm, cudaFuncCachePreferShared);
+	if (cudaStatus != cudaSuccess)
+	{
+		fprintf(stderr, "Failed to set cache config for execute_vm!");
+		return false;
+	}
+
 	printf("%zu MB free GPU memory left\n", free_mem >> 20);
 
 	time_point<steady_clock> prev_time;
@@ -258,7 +265,7 @@ bool test_mining(bool validate)
 			}
 
 			init_vm<<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu);
-			execute_vm<<<batch_size / 8, 8 * 4>>>(vm_states_gpu, scratchpads_gpu, dataset_gpu, batch_size);
+			execute_vm<<<batch_size / 4, 4 * 8>>>(vm_states_gpu, scratchpads_gpu, dataset_gpu, batch_size);
 
 			if (i == PROGRAM_COUNT - 1)
 			{
