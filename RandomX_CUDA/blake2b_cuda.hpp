@@ -300,11 +300,11 @@ __global__ void blake2b_initial_hash(void *out, const void* blockTemplate, uint3
 	t[7] = hash[7];
 }
 
-template<uint32_t registers_len, uint32_t out_len>
+template<uint32_t registers_len, uint32_t registers_stride, uint32_t out_len>
 __global__ void blake2b_hash_registers(void *out, const void* in)
 {
 	const uint32_t global_index = blockIdx.x * blockDim.x + threadIdx.x;
-	const uint64_t* p = ((const uint64_t*) in) + global_index * (registers_len / sizeof(uint64_t));
+	const uint64_t* p = ((const uint64_t*) in) + global_index * (registers_stride / sizeof(uint64_t));
 	uint64_t* h = ((uint64_t*) out) + global_index * (out_len / sizeof(uint64_t));
 
 	uint64_t m[16] = { p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11], p[12], p[13], p[14], p[15] };

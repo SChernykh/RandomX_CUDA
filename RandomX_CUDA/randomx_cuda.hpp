@@ -24,6 +24,7 @@ constexpr size_t DATASET_SIZE = 1U << 31;
 constexpr size_t SCRATCHPAD_SIZE = 1U << 21;
 constexpr size_t HASH_SIZE = 64;
 constexpr size_t PROGRAM_SIZE = 128 + 2048;
+constexpr size_t VM_STATE_SIZE = 2048;
 constexpr size_t PROGRAM_COUNT = 8;
 constexpr size_t REGISTERS_SIZE = 256;
 
@@ -93,40 +94,79 @@ __device__ void test_memory_access(uint64_t* r, uint8_t* scratchpad, uint32_t ba
 	r[1] = y;
 }
 
-__global__ void __launch_bounds__(32) execute_vm(const void* entropy_data, void* registers, void* scratchpads, const void* dataset, uint32_t batch_size)
+__global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm_states)
 {
-	__shared__ uint64_t registers_buf[32 * 8];
+	const uint32_t global_index = blockIdx.x * blockDim.x + threadIdx.x;
+	const uint32_t idx = global_index / 8;
+	const uint32_t sub = global_index % 8;
+
+	uint64_t* R = ((uint64_t*) vm_states) + idx * VM_STATE_SIZE / sizeof(uint64_t);
+	R[sub] = 0;
+
+	const uint64_t* entropy = ((const uint64_t*) entropy_data) + idx * PROGRAM_SIZE / sizeof(uint64_t);
+
+	double* A = (double*)(R + 24);
+	A[sub] = getSmallPositiveFloatBits(entropy[sub]);
+
+	uint32_t ma = static_cast<uint32_t>(entropy[8]) & CacheLineAlignMask;
+	uint32_t mx = static_cast<uint32_t>(entropy[10]) & CacheLineAlignMask;
+
+	uint32_t addressRegisters = static_cast<uint32_t>(entropy[12]);
+	addressRegisters = ((addressRegisters & 1) | (((addressRegisters & 2) ? 3U : 2U) << 8) | (((addressRegisters & 4) ? 5U : 4U) << 16) | (((addressRegisters & 8) ? 7U : 6U) << 24)) * sizeof(uint64_t);
+
+	ulonglong2 eMask = *(ulonglong2*)(entropy + 14);
+	eMask.x = (eMask.x & ((1ULL << 22) - 1)) | ((1023ULL - 240) << 52);
+	eMask.y = (eMask.y & ((1ULL << 22) - 1)) | ((1023ULL - 240) << 52);
+
+	((uint32_t*)(R + 16))[0] = ma;
+	((uint32_t*)(R + 16))[1] = mx;
+	((uint32_t*)(R + 16))[2] = addressRegisters;
+	((ulonglong2*)(R + 18))[0] = eMask;
+}
+
+template<typename T, size_t N>
+__device__ void load_buffer(T (&dst_buf)[N], const void* src_buf)
+{
+	uint32_t i = threadIdx.x * sizeof(T);
+	const uint32_t step = blockDim.x * sizeof(T);
+	const uint8_t* src = ((const uint8_t*) src_buf) + blockIdx.x * sizeof(T) * N + i;
+	uint8_t* dst = ((uint8_t*) dst_buf) + i;
+	while (i < sizeof(T) * N)
+	{
+		*(T*)(dst) = *(T*)(src);
+		src += step;
+		dst += step;
+		i += step;
+	}
+}
+
+__global__ void __launch_bounds__(32) execute_vm(void* vm_states, void* scratchpads, const void* dataset, uint32_t batch_size)
+{
+	// 8 hashes per warp, 16 KB shared memory for VM states
+	__shared__ uint64_t vm_states_local[(VM_STATE_SIZE * 8) / sizeof(uint64_t)];
+
+	load_buffer(vm_states_local, vm_states);
+	__syncthreads();
+
+	uint64_t* R = vm_states_local + (threadIdx.x / 4) * VM_STATE_SIZE / sizeof(uint64_t);
+	double* F = (double*)(R + 8);
+	double* E = (double*)(R + 16);
+	double* A = (double*)(R + 24);
 
 	const uint32_t global_index = blockIdx.x * blockDim.x + threadIdx.x;
 	const uint32_t idx = global_index / 4;
 	const uint32_t sub = global_index % 4;
 
-	uint64_t* R = registers_buf + (threadIdx.x / 4) * 32;
-	double* F = (double*)(R + 8);
-	double* E = (double*)(R + 16);
-	double* A = (double*)(R + 24);
+	uint32_t ma = ((uint32_t*)(R + 16))[0];
+	uint32_t mx = ((uint32_t*)(R + 16))[1];
 
-	R[sub + 0] = 0;
-	R[sub + 4] = 0;
+	const uint32_t addressRegisters = ((uint32_t*)(R + 16))[2];
+	const uint64_t* readReg0 = (uint64_t*)(((uint8_t*) R) + (addressRegisters & 0xff));
+	const uint64_t* readReg1 = (uint64_t*)(((uint8_t*) R) + ((addressRegisters >> 8) & 0xff));
+	const uint64_t* readReg2 = (uint64_t*)(((uint8_t*) R) + ((addressRegisters >> 16) & 0xff));
+	const uint64_t* readReg3 = (uint64_t*)(((uint8_t*) R) + (addressRegisters >> 24));
 
-	const uint64_t* entropy = ((const uint64_t*)entropy_data) + idx * (PROGRAM_SIZE / sizeof(uint64_t));
-	A[sub + 0] = getSmallPositiveFloatBits(entropy[sub + 0]);
-	A[sub + 4] = getSmallPositiveFloatBits(entropy[sub + 4]);
-
-	__syncthreads();
-
-	uint32_t ma = static_cast<uint32_t>(entropy[8]) & CacheLineAlignMask;
-	uint32_t mx = static_cast<uint32_t>(entropy[10]);
-
-	const uint32_t addressRegisters = static_cast<uint32_t>(entropy[12]);
-	const uint64_t* readReg0 = R + (addressRegisters & 1);
-	const uint64_t* readReg1 = R + ((addressRegisters & 2) ? 3 : 2);
-	const uint64_t* readReg2 = R + ((addressRegisters & 4) ? 5 : 4);
-	const uint64_t* readReg3 = R + ((addressRegisters & 8) ? 7 : 6);
-
-	ulonglong2 eMask = *(ulonglong2*)(entropy + 14);
-	eMask.x = (eMask.x & ((1ULL << 22) - 1)) | ((1023ULL - 240) << 52);
-	eMask.y = (eMask.y & ((1ULL << 22) - 1)) | ((1023ULL - 240) << 52);
+	ulonglong2 eMask = ((ulonglong2*)(R + 18))[0];
 
 	uint32_t spAddr0 = mx;
 	uint32_t spAddr1 = ma;
@@ -199,7 +239,7 @@ __global__ void __launch_bounds__(32) execute_vm(const void* entropy_data, void*
 		spAddr1 = 0;
 	}
 
-	uint64_t* p = ((uint64_t*) registers) + idx * (REGISTERS_SIZE / sizeof(uint64_t));
+	uint64_t* p = ((uint64_t*) vm_states) + idx * (VM_STATE_SIZE / sizeof(uint64_t));
 
 	p[sub + 0] = R[sub + 0];
 	p[sub + 4] = R[sub + 4];

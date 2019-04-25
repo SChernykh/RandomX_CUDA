@@ -183,24 +183,17 @@ bool test_mining(bool validate)
 		return false;
 	}
 
-	GPUPtr programs_gpu(batch_size * PROGRAM_SIZE);
-	if (!programs_gpu)
+	GPUPtr entropy_gpu(batch_size * PROGRAM_SIZE);
+	if (!entropy_gpu)
 	{
 		fprintf(stderr, "Failed to allocate GPU memory for programs!");
 		return false;
 	}
 
-	GPUPtr registers_gpu(batch_size * REGISTERS_SIZE);
-	if (!registers_gpu)
+	GPUPtr vm_states_gpu(batch_size * VM_STATE_SIZE);
+	if (!vm_states_gpu)
 	{
-		fprintf(stderr, "Failed to allocate GPU memory for registers!");
-		return false;
-	}
-
-	cudaStatus = cudaMemset(registers_gpu, 0, batch_size * REGISTERS_SIZE);
-	if (cudaStatus != cudaSuccess)
-	{
-		fprintf(stderr, "Failed to initialize GPU memory for registers!");
+		fprintf(stderr, "Failed to allocate GPU memory for VM states!");
 		return false;
 	}
 
@@ -257,25 +250,26 @@ bool test_mining(bool validate)
 
 		for (size_t i = 0; i < PROGRAM_COUNT; ++i)
 		{
-			fillAes1Rx4<PROGRAM_SIZE, false><<<batch_size / 32, 32 * 4>>>(hashes_gpu, programs_gpu, batch_size);
+			fillAes1Rx4<PROGRAM_SIZE, false><<<batch_size / 32, 32 * 4>>>(hashes_gpu, entropy_gpu, batch_size);
 			cudaStatus = cudaGetLastError();
 			if (cudaStatus != cudaSuccess) {
 				fprintf(stderr, "fillAes1Rx4 launch failed: %s\n", cudaGetErrorString(cudaStatus));
 				return false;
 			}
 
-			execute_vm<<<batch_size / 8, 8 * 4>>>(programs_gpu, registers_gpu, scratchpads_gpu, dataset_gpu, batch_size);
+			init_vm<<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu);
+			execute_vm<<<batch_size / 8, 8 * 4>>>(vm_states_gpu, scratchpads_gpu, dataset_gpu, batch_size);
 
 			if (i == PROGRAM_COUNT - 1)
 			{
-				hashAes1Rx4<SCRATCHPAD_SIZE, 192, REGISTERS_SIZE><<<batch_size / 32, 32 * 4>>>(scratchpads_gpu, registers_gpu, batch_size);
+				hashAes1Rx4<SCRATCHPAD_SIZE, 192, VM_STATE_SIZE><<<batch_size / 32, 32 * 4>>>(scratchpads_gpu, vm_states_gpu, batch_size);
 				cudaStatus = cudaGetLastError();
 				if (cudaStatus != cudaSuccess) {
 					fprintf(stderr, "hashAes1Rx4 launch failed: %s\n", cudaGetErrorString(cudaStatus));
 					return false;
 				}
 
-				blake2b_hash_registers<REGISTERS_SIZE, 32><<<batch_size / 32, 32>>>(hashes_gpu, registers_gpu);
+				blake2b_hash_registers<REGISTERS_SIZE, VM_STATE_SIZE, 32><<<batch_size / 32, 32>>>(hashes_gpu, vm_states_gpu);
 				cudaStatus = cudaGetLastError();
 				if (cudaStatus != cudaSuccess) {
 					fprintf(stderr, "blake2b_hash_registers launch failed: %s\n", cudaGetErrorString(cudaStatus));
@@ -284,7 +278,7 @@ bool test_mining(bool validate)
 			}
 			else
 			{
-				blake2b_hash_registers<REGISTERS_SIZE, 64><<<batch_size / 32, 32>>>(hashes_gpu, registers_gpu);
+				blake2b_hash_registers<REGISTERS_SIZE, VM_STATE_SIZE, 64><<<batch_size / 32, 32>>>(hashes_gpu, vm_states_gpu);
 				cudaStatus = cudaGetLastError();
 				if (cudaStatus != cudaSuccess) {
 					fprintf(stderr, "blake2b_hash_registers launch failed: %s\n", cudaGetErrorString(cudaStatus));
@@ -537,7 +531,7 @@ void tests()
 	}
 
 	{
-		blake2b_hash_registers<REGISTERS_SIZE, 32><<<NUM_SCRATCHPADS_TEST / 32, 32>>>(hash_gpu, registers_gpu);
+		blake2b_hash_registers<REGISTERS_SIZE, REGISTERS_SIZE, 32><<<NUM_SCRATCHPADS_TEST / 32, 32>>>(hash_gpu, registers_gpu);
 		cudaStatus = cudaGetLastError();
 		if (cudaStatus != cudaSuccess) {
 			fprintf(stderr, "blake2b_hash_registers launch failed: %s\n", cudaGetErrorString(cudaStatus));
@@ -565,7 +559,7 @@ void tests()
 	}
 
 	{
-		blake2b_hash_registers<REGISTERS_SIZE, 64><<<NUM_SCRATCHPADS_TEST / 32, 32>>>(hash_gpu, registers_gpu);
+		blake2b_hash_registers<REGISTERS_SIZE, REGISTERS_SIZE, 64><<<NUM_SCRATCHPADS_TEST / 32, 32>>>(hash_gpu, registers_gpu);
 		cudaStatus = cudaGetLastError();
 		if (cudaStatus != cudaSuccess) {
 			fprintf(stderr, "blake2b_hash_registers launch failed: %s\n", cudaGetErrorString(cudaStatus));
