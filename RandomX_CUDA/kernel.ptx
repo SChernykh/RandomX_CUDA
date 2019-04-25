@@ -100,14 +100,14 @@
 	.param .u64 _Z10execute_vmPvS_PKvj_param_2,
 	.param .u32 _Z10execute_vmPvS_PKvj_param_3
 )
-.maxntid 32, 1, 1
+.maxntid 16, 1, 1
 {
 	.reg .pred 	%p<5>;
 	.reg .b32 	%r<106>;
 	.reg .f64 	%fd<6>;
 	.reg .b64 	%rd<95>;
 	// demoted variable
-	.shared .align 8 .b8 _ZZ10execute_vmPvS_PKvjE15vm_states_local[8192];
+	.shared .align 8 .b8 _ZZ10execute_vmPvS_PKvjE15vm_states_local[4096];
 
 	ld.param.u64 	%rd23, [_Z10execute_vmPvS_PKvj_param_0];
 	ld.param.u64 	%rd24, [_Z10execute_vmPvS_PKvj_param_1];
@@ -118,7 +118,7 @@
 	mov.u32 	%r3, %ntid.x;
 	shl.b32 	%r4, %r3, 3;
 	mov.u32 	%r5, %ctaid.x;
-	setp.gt.u32	%p1, %r100, 8191;
+	setp.gt.u32	%p1, %r100, 4095;
 	@%p1 bra 	BB1_3;
 
 	mov.u32 	%r37, _ZZ10execute_vmPvS_PKvjE15vm_states_local;
@@ -126,7 +126,7 @@
 	cvt.u64.u32	%rd1, %r4;
 	cvta.to.global.u64 	%rd26, %rd23;
 	cvt.u64.u32	%rd27, %r100;
-	mul.wide.u32 	%rd28, %r5, 8192;
+	mul.wide.u32 	%rd28, %r5, 4096;
 	add.s64 	%rd29, %rd28, %rd27;
 	add.s64 	%rd93, %rd26, %rd29;
 
@@ -136,13 +136,13 @@ BB1_2:
 	add.s64 	%rd93, %rd93, %rd1;
 	add.s32 	%r99, %r99, %r4;
 	add.s32 	%r100, %r100, %r4;
-	setp.lt.u32	%p2, %r100, 8192;
+	setp.lt.u32	%p2, %r100, 4096;
 	@%p2 bra 	BB1_2;
 
 BB1_3:
 	cvta.to.global.u64 	%rd5, %rd25;
 	cvta.to.global.u64 	%rd6, %rd24;
-	bar.sync 	0;
+	bar.warp.sync 	-1;
 	shr.u32 	%r39, %r1, 3;
 	mul.wide.u32 	%rd31, %r39, 256;
 	cvt.u32.u64	%r40, %rd31;
@@ -231,7 +231,7 @@ BB1_4:
 	and.b64  	%rd56, %rd55, %rd8;
 	or.b64  	%rd57, %rd56, %rd10;
 	st.shared.u64 	[%r20], %rd57;
-	bar.sync 	0;
+	bar.warp.sync 	-1;
 	cvt.u64.u32	%rd17, %r105;
 	add.s64 	%rd60, %rd17, %rd11;
 	add.s64 	%rd61, %rd5, %rd60;
@@ -277,7 +277,7 @@ BB1_4:
 	and.b64  	%rd79, %rd78, %rd8;
 	or.b64  	%rd80, %rd79, %rd10;
 	st.shared.u64 	[%r20], %rd80;
-	bar.sync 	0;
+	bar.warp.sync 	-1;
 	ld.shared.u64 	%rd81, [%r16];
 	cvt.u64.u32	%rd82, %r104;
 	add.s64 	%rd83, %rd82, %rd11;

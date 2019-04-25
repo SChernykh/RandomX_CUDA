@@ -140,13 +140,18 @@ __device__ void load_buffer(T (&dst_buf)[N], const void* src_buf)
 	}
 }
 
-__global__ void __launch_bounds__(32) execute_vm(void* vm_states, void* scratchpads, const void* dataset, uint32_t batch_size)
+__global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchpads, const void* dataset, uint32_t batch_size)
 {
-	// 4 hashes per warp, 8 KB shared memory for VM states
-	__shared__ uint64_t vm_states_local[(VM_STATE_SIZE * 4) / sizeof(uint64_t)];
+	// 2 hashes per warp, 4 KB shared memory for VM states
+	__shared__ uint64_t vm_states_local[(VM_STATE_SIZE * 2) / sizeof(uint64_t)];
 
 	load_buffer(vm_states_local, vm_states);
+
+#if (__CUDACC_VER_MAJOR__ >= 9)
+	__syncwarp();
+#else
 	__syncthreads();
+#endif
 
 	uint64_t* R = vm_states_local + (threadIdx.x / 8) * VM_STATE_SIZE / sizeof(uint64_t);
 	double* F = (double*)(R + 8);
@@ -206,7 +211,11 @@ __global__ void __launch_bounds__(32) execute_vm(void* vm_states, void* scratchp
 		fe[0] = load_F_E_groups(q[0], andMask, orMask1);
 		fe[1] = load_F_E_groups(q[1], andMask, orMask2);
 
+#if (__CUDACC_VER_MAJOR__ >= 9)
+		__syncwarp();
+#else
 		__syncthreads();
+#endif
 
 		// TODO: execute byte code
 		//if (sub == 0) test_memory_access(r, scratchpad, batch_size);

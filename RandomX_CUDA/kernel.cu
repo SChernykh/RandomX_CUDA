@@ -265,7 +265,7 @@ bool test_mining(bool validate)
 			}
 
 			init_vm<<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu);
-			execute_vm<<<batch_size / 4, 4 * 8>>>(vm_states_gpu, scratchpads_gpu, dataset_gpu, batch_size);
+			execute_vm<<<batch_size / 2, 2 * 8>>>(vm_states_gpu, scratchpads_gpu, dataset_gpu, batch_size);
 
 			if (i == PROGRAM_COUNT - 1)
 			{
