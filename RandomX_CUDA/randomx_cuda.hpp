@@ -70,7 +70,7 @@ __device__ void test_memory_access(uint64_t* r, uint8_t* scratchpad, uint32_t ba
 	uint64_t y = r[1];
 
 	#pragma unroll
-	for (int i = 0; i < 39; ++i)
+	for (int i = 0; i < 55; ++i)
 	{
 		x = x * 0x08088405U + 1;
 
@@ -82,23 +82,12 @@ __device__ void test_memory_access(uint64_t* r, uint8_t* scratchpad, uint32_t ba
 		uint64_t offset;
 		asm("mul.wide.u32 %0,%1,%2;" : "=l"(offset) : "r"(addr), "r"(batch_size));
 
-		y ^= *(uint64_t*)(scratchpad + offset + (x & 56));
-	}
-
-	#pragma unroll
-	for (int i = 0; i < 16; ++i)
-	{
-		x = x * 0x8088405 + 1;
-
-		uint32_t mask = 16320;
-		if (x < 0x58000000U) mask = 262080;
-		if (x < 0x20000000U) mask = 2097088;
-
-		uint32_t addr = x & mask;
-		uint64_t offset;
-		asm("mul.wide.u32 %0,%1,%2;" : "=l"(offset) : "r"(addr), "r"(batch_size));
-
-		*(uint64_t*)(scratchpad + offset + (x & 56)) = x;
+		x = x * 0x08088405U + 1;
+		uint64_t* p = (uint64_t*)(scratchpad + offset + (x & 56));
+		if (x <= 3045522264U)
+			y ^= *p; // 39/55
+		else
+			*p = x; // 16/55
 	}
 
 	r[1] = y;
