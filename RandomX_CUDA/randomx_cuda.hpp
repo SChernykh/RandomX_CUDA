@@ -87,7 +87,7 @@ __device__ void test_memory_access(uint64_t* r, uint8_t* scratchpad, uint32_t ba
 		if (x <= 3045522264U)
 			y ^= *p; // 39/55
 		else
-			*p = x; // 16/55
+			*p = y; // 16/55
 	}
 
 	r[1] = y;
