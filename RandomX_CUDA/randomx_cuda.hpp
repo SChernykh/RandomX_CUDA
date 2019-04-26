@@ -23,7 +23,7 @@ along with RandomX CUDA.  If not, see<http://www.gnu.org/licenses/>.
 constexpr size_t DATASET_SIZE = 1U << 31;
 constexpr size_t SCRATCHPAD_SIZE = 1U << 21;
 constexpr size_t HASH_SIZE = 64;
-constexpr size_t PROGRAM_SIZE = 128 + 2048;
+constexpr size_t ENTROPY_SIZE = 128 + 2048;
 constexpr size_t VM_STATE_SIZE = 2048;
 constexpr size_t PROGRAM_COUNT = 8;
 constexpr size_t REGISTERS_SIZE = 256;
@@ -103,25 +103,28 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 	uint64_t* R = ((uint64_t*) vm_states) + idx * VM_STATE_SIZE / sizeof(uint64_t);
 	R[sub] = 0;
 
-	const uint64_t* entropy = ((const uint64_t*) entropy_data) + idx * PROGRAM_SIZE / sizeof(uint64_t);
+	const uint64_t* entropy = ((const uint64_t*) entropy_data) + idx * ENTROPY_SIZE / sizeof(uint64_t);
 
 	double* A = (double*)(R + 24);
 	A[sub] = getSmallPositiveFloatBits(entropy[sub]);
 
-	uint32_t ma = static_cast<uint32_t>(entropy[8]) & CacheLineAlignMask;
-	uint32_t mx = static_cast<uint32_t>(entropy[10]) & CacheLineAlignMask;
+	if (sub == 0)
+	{
+		uint32_t ma = static_cast<uint32_t>(entropy[8]) & CacheLineAlignMask;
+		uint32_t mx = static_cast<uint32_t>(entropy[10]) & CacheLineAlignMask;
 
-	uint32_t addressRegisters = static_cast<uint32_t>(entropy[12]);
-	addressRegisters = ((addressRegisters & 1) | (((addressRegisters & 2) ? 3U : 2U) << 8) | (((addressRegisters & 4) ? 5U : 4U) << 16) | (((addressRegisters & 8) ? 7U : 6U) << 24)) * sizeof(uint64_t);
+		uint32_t addressRegisters = static_cast<uint32_t>(entropy[12]);
+		addressRegisters = ((addressRegisters & 1) | (((addressRegisters & 2) ? 3U : 2U) << 8) | (((addressRegisters & 4) ? 5U : 4U) << 16) | (((addressRegisters & 8) ? 7U : 6U) << 24)) * sizeof(uint64_t);
 
-	ulonglong2 eMask = *(ulonglong2*)(entropy + 14);
-	eMask.x = (eMask.x & ((1ULL << 22) - 1)) | ((1023ULL - 240) << 52);
-	eMask.y = (eMask.y & ((1ULL << 22) - 1)) | ((1023ULL - 240) << 52);
+		ulonglong2 eMask = *(ulonglong2*)(entropy + 14);
+		eMask.x = (eMask.x & ((1ULL << 22) - 1)) | ((1023ULL - 240) << 52);
+		eMask.y = (eMask.y & ((1ULL << 22) - 1)) | ((1023ULL - 240) << 52);
 
-	((uint32_t*)(R + 16))[0] = ma;
-	((uint32_t*)(R + 16))[1] = mx;
-	((uint32_t*)(R + 16))[2] = addressRegisters;
-	((ulonglong2*)(R + 18))[0] = eMask;
+		((uint32_t*)(R + 16))[0] = ma;
+		((uint32_t*)(R + 16))[1] = mx;
+		((uint32_t*)(R + 16))[2] = addressRegisters;
+		((ulonglong2*)(R + 18))[0] = eMask;
+	}
 }
 
 template<typename T, size_t N>
@@ -168,8 +171,8 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 	const uint32_t addressRegisters = ((uint32_t*)(R + 16))[2];
 	const uint64_t* readReg0 = (uint64_t*)(((uint8_t*) R) + (addressRegisters & 0xff));
 	const uint64_t* readReg1 = (uint64_t*)(((uint8_t*) R) + ((addressRegisters >> 8) & 0xff));
-	const uint64_t* readReg2 = (uint64_t*)(((uint8_t*) R) + ((addressRegisters >> 16) & 0xff));
-	const uint64_t* readReg3 = (uint64_t*)(((uint8_t*) R) + (addressRegisters >> 24));
+	const uint32_t* readReg2 = (uint32_t*)(((uint8_t*) R) + ((addressRegisters >> 16) & 0xff));
+	const uint32_t* readReg3 = (uint32_t*)(((uint8_t*) R) + (addressRegisters >> 24));
 
 	ulonglong2 eMask = ((ulonglong2*)(R + 18))[0];
 
@@ -188,6 +191,7 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 	const uint64_t orMask1 = f_group ? 0 : eMask.x;
 	const uint64_t orMask2 = f_group ? 0 : eMask.y;
 
+	#pragma unroll(1)
 	for (int ic = 0; ic < PROGRAM_ITERATIONS; ++ic)
 	{
 		const uint64_t spMix = *readReg0 ^ *readReg1;
