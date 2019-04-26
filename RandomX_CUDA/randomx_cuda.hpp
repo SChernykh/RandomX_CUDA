@@ -27,8 +27,7 @@ constexpr size_t ENTROPY_SIZE = 128 + 2048;
 constexpr size_t VM_STATE_SIZE = 2048;
 constexpr size_t PROGRAM_COUNT = 8;
 constexpr size_t REGISTERS_SIZE = 256;
-
-constexpr int PROGRAM_ITERATIONS = 2048;
+constexpr size_t IMM_BUF_SIZE = 512;
 
 constexpr int ScratchpadL3Mask64 = (1 << 21) - 64;
 
@@ -94,6 +93,36 @@ __device__ void test_memory_access(uint64_t* r, uint8_t* scratchpad, uint32_t ba
 	r[1] = y;
 }
 
+//
+// VM state:
+//
+// Bytes 0-255: registers
+// Bytes 256-767: imm32 values (up to 128 values can be stored). IMUL_RCP uses 2 consecutive imm32 values.
+// Bytes 768-2047: up to 320 instructions
+//
+// Instruction encoding:
+//
+// Bits 0-1: instruction group (integer, FP, store, conditional)
+// Bits 2-4: dst (0-7)
+// Bits 5-7: src (0-7)
+// Bits 8-14: imm32/64 offset (in DWORDs, 0-127)
+// Bits 15-16: src location (register, L1, L2, L3)
+//
+// Integer group:
+// Bits 17-18: src shift (0-3)
+// Bit 19: src=imm64
+// Bit 20: add
+// Bit 21: add_imm32
+// Bit 22: sub
+// Bit 23: mul
+// Bit 24: umul_hi
+// Bit 25: imul_hi
+// Bit 26: neg
+// Bit 27: xor
+// Bit 28: ror
+// Bit 29: swap
+//
+
 __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm_states)
 {
 	const uint32_t global_index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -124,6 +153,38 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 		((uint32_t*)(R + 16))[1] = mx;
 		((uint32_t*)(R + 16))[2] = addressRegisters;
 		((ulonglong2*)(R + 18))[0] = eMask;
+
+		uint2* src_program = (uint2*)(entropy + 128 / sizeof(uint64_t));
+		uint32_t* imm_buf = (uint32_t*)(R + REGISTERS_SIZE / sizeof(uint64_t));
+		uint32_t imm_index = 0;
+		uint32_t* compiled_program = (uint32_t*)(R + (REGISTERS_SIZE + IMM_BUF_SIZE) / sizeof(uint64_t));
+
+		for (int i = 0; i < RANDOMX_PROGRAM_SIZE; ++i)
+		{
+			uint2 inst = src_program[i];
+
+			const uint32_t opcode = inst.x & 0xff;
+			const uint32_t dst = (inst.x >> 8) & 7;
+			const uint32_t src = (inst.x >> 16) & 7;
+			const uint32_t mod = (inst.x >> 24);
+
+			inst.x = 0xFFFFFFFFU;
+
+			if (opcode < RANDOMX_FREQ_IADD_RS)
+			{
+				const uint32_t shift = mod >> 6;
+
+				inst.x = (dst << 2) | (src << 5) | (shift << 17) | (1U << 20);
+
+				if (dst == randomx::RegisterNeedsDisplacement)
+				{
+					inst.x |= (imm_index << 8) | (1U << 21);
+					imm_buf[imm_index++] = inst.y;
+				}
+			}
+
+			*(compiled_program++) = inst.x;
+		}
 	}
 }
 
@@ -150,11 +211,7 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 
 	load_buffer(vm_states_local, vm_states);
 
-#if (__CUDACC_VER_MAJOR__ >= 9)
 	__syncwarp();
-#else
-	__syncthreads();
-#endif
 
 	uint64_t* R = vm_states_local + (threadIdx.x / 8) * VM_STATE_SIZE / sizeof(uint64_t);
 	double* F = (double*)(R + 8);
@@ -191,8 +248,11 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 	const uint64_t orMask1 = f_group ? 0 : eMask.x;
 	const uint64_t orMask2 = f_group ? 0 : eMask.y;
 
+	uint32_t* imm_buf = (uint32_t*)(R + REGISTERS_SIZE / sizeof(uint64_t));
+	uint32_t* compiled_program = (uint32_t*)(R + (REGISTERS_SIZE + IMM_BUF_SIZE) / sizeof(uint64_t));
+
 	#pragma unroll(1)
-	for (int ic = 0; ic < PROGRAM_ITERATIONS; ++ic)
+	for (int ic = 0; ic < RANDOMX_PROGRAM_ITERATIONS; ++ic)
 	{
 		const uint64_t spMix = *readReg0 ^ *readReg1;
 		spAddr0 ^= ((const uint32_t*) &spMix)[0];
@@ -215,14 +275,49 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 		fe[0] = load_F_E_groups(q[0], andMask, orMask1);
 		fe[1] = load_F_E_groups(q[1], andMask, orMask2);
 
-#if (__CUDACC_VER_MAJOR__ >= 9)
 		__syncwarp();
-#else
-		__syncthreads();
-#endif
 
-		// TODO: execute byte code
-		//if (sub == 0) test_memory_access(r, scratchpad, batch_size);
+		if (sub == 0)
+		{
+			for (int ip = 0; ip < RANDOMX_PROGRAM_SIZE; ++ip)
+			{
+				uint32_t inst = compiled_program[ip];
+
+				asm("// INSTRUCTION DECODING BEGIN");
+
+				const uint32_t group = inst & 3;
+				uint64_t* dst_ptr = R + ((inst >> 2) & 7);
+				uint64_t* src_ptr = R + ((inst >> 5) & 7);
+				uint32_t* imm_ptr = imm_buf + ((inst >> 8) & 127);
+
+				uint64_t dst = *dst_ptr;
+				uint64_t src = *src_ptr;
+				uint2 imm = *(uint2*)(imm_ptr);
+
+				asm("// INSTRUCTION DECODING END");
+
+				// Integer instructions
+				if (group == 0)
+				{
+					asm("// INTEGER GROUP BEGIN");
+
+					uint32_t shift = (inst >> 17) & 3;
+					src <<= shift;
+
+					bool is_add = inst & (1 << 20);
+					bool is_add_imm32 = inst & (1 << 21);
+
+					if (is_add) dst += src;
+					if (is_add_imm32) dst += static_cast<int32_t>(imm.x);
+
+					*dst_ptr = dst;
+
+					asm("// INTEGER GROUP END");
+				}
+
+				__syncwarp((1U << 0) | (8U << 0));
+			}
+		}
 
 		mx ^= *readReg2 ^ *readReg3;
 		mx &= CacheLineAlignMask;

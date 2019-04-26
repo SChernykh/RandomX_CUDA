@@ -29,6 +29,8 @@ along with RandomX CUDA.  If not, see<http://www.gnu.org/licenses/>.
 #include "../RandomX/src/blake2/blake2.h"
 #include "../RandomX/src/aes_hash.hpp"
 #include "../RandomX/src/randomx.h"
+#include "../RandomX/src/configuration.h"
+#include "../RandomX/src/common.hpp"
 
 #include "blake2b_cuda.hpp"
 #include "aes_cuda.hpp"
