@@ -110,18 +110,46 @@ __device__ void test_memory_access(uint64_t* r, uint8_t* scratchpad, uint32_t ba
 //
 // Integer group:
 // Bits 17-18: src shift (0-3)
-// Bit 19: src=imm64
-// Bit 20: add
-// Bit 21: add_imm32
-// Bit 22: sub
-// Bit 23: mul
-// Bit 24: umul_hi
-// Bit 25: imul_hi
-// Bit 26: neg
-// Bit 27: xor
-// Bit 28: ror
-// Bit 29: swap
+// Bit 19: src=imm32
+// Bit 20: src=imm64
+// Bits 21-24: instruction (add_rs, add, sub, mul, umul_hi, imul_hi, neg, xor, ror, swap)
 //
+
+#define DST_OFFSET						2
+#define SRC_OFFSET						5
+#define IMM_OFFSET						8
+#define LOC_OFFSET						15
+#define IGROUP_SHIFT_OFFSET				17
+#define IGROUP_SRC_IS_IMM32_OFFSET		19
+#define IGROUP_SRC_IS_IMM64_OFFSET		20
+#define IGROUP_OPCODE_OFFSET			21
+
+#define INST_NOP						3
+
+__device__ uint64_t imul_rcp_value(uint32_t divisor)
+{
+	if (divisor == 0)
+	{
+		return 1ULL;
+	}
+
+	const uint64_t p2exp63 = 1ULL << 63;
+
+	uint64_t quotient = p2exp63 / divisor;
+	uint64_t remainder = p2exp63 % divisor;
+
+	uint32_t bsr;
+	asm("bfind.u32 %0,%1;" : "=r"(bsr) : "r"(divisor));
+
+	for (uint32_t shift = 0; shift <= bsr; ++shift)
+	{
+		const bool b = (remainder >= divisor - remainder);
+		quotient = (quotient << 1) | (b ? 1 : 0);
+		remainder = (remainder << 1) - (b ? divisor : 0);
+	}
+
+	return quotient;
+}
 
 __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm_states)
 {
@@ -166,25 +194,198 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 		{
 			uint2 inst = src_program[i];
 
-			const uint32_t opcode = inst.x & 0xff;
+			uint32_t opcode = inst.x & 0xff;
 			const uint32_t dst = (inst.x >> 8) & 7;
 			const uint32_t src = (inst.x >> 16) & 7;
 			const uint32_t mod = (inst.x >> 24);
 
-			inst.x = 0xFFFFFFFFU;
+			inst.x = INST_NOP;
 
 			if (opcode < RANDOMX_FREQ_IADD_RS)
 			{
 				const uint32_t shift = mod >> 6;
 
-				inst.x = (dst << 2) | (src << 5) | (shift << 17) | (1U << 20);
+				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (shift << IGROUP_SHIFT_OFFSET);
 
-				if (dst == randomx::RegisterNeedsDisplacement)
+				if (dst != randomx::RegisterNeedsDisplacement)
 				{
-					inst.x |= (imm_index << 8) | (1U << 21);
+					// Encode regular ADD (opcode 1)
+					inst.x |= (1 << IGROUP_OPCODE_OFFSET);
+				}
+				else
+				{
+					// Encode ADD with src and imm32 (opcode 0)
+					inst.x |= imm_index << 8;
 					imm_buf[imm_index++] = inst.y;
 				}
+
+				*(compiled_program++) = inst.x;
+				continue;
 			}
+			opcode -= RANDOMX_FREQ_IADD_RS;
+
+			if (opcode < RANDOMX_FREQ_IADD_M)
+			{
+				const uint32_t location = (src == dst) ? 3 : ((mod % 4) ? 1 : 2);
+				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (1 << IGROUP_OPCODE_OFFSET);
+				inst.x |= (imm_index << 8);
+				imm_buf[imm_index++] = inst.y;
+				*(compiled_program++) = inst.x;
+				continue;
+			}
+			opcode -= RANDOMX_FREQ_IADD_M;
+
+			if (opcode < RANDOMX_FREQ_ISUB_R)
+			{
+				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (2 << IGROUP_OPCODE_OFFSET);
+				if (src == dst)
+				{
+					inst.x |= (imm_index << 8) | (1 << IGROUP_SRC_IS_IMM32_OFFSET);
+					imm_buf[imm_index++] = inst.y;
+				}
+				*(compiled_program++) = inst.x;
+				continue;
+			}
+			opcode -= RANDOMX_FREQ_ISUB_R;
+
+			if (opcode < RANDOMX_FREQ_ISUB_M)
+			{
+				const uint32_t location = (src == dst) ? 3 : ((mod % 4) ? 1 : 2);
+				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (2 << IGROUP_OPCODE_OFFSET);
+				inst.x |= (imm_index << 8);
+				imm_buf[imm_index++] = inst.y;
+				*(compiled_program++) = inst.x;
+				continue;
+			}
+			opcode -= RANDOMX_FREQ_ISUB_M;
+
+			if (opcode < RANDOMX_FREQ_IMUL_R)
+			{
+				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (3 << IGROUP_OPCODE_OFFSET);
+				if (src == dst)
+				{
+					inst.x |= (imm_index << 8) | (1 << IGROUP_SRC_IS_IMM32_OFFSET);
+					imm_buf[imm_index++] = inst.y;
+				}
+				*(compiled_program++) = inst.x;
+				continue;
+			}
+			opcode -= RANDOMX_FREQ_IMUL_R;
+
+			if (opcode < RANDOMX_FREQ_IMUL_M)
+			{
+				const uint32_t location = (src == dst) ? 3 : ((mod % 4) ? 1 : 2);
+				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (3 << IGROUP_OPCODE_OFFSET);
+				inst.x |= (imm_index << 8);
+				imm_buf[imm_index++] = inst.y;
+				*(compiled_program++) = inst.x;
+				continue;
+			}
+			opcode -= RANDOMX_FREQ_IMUL_M;
+
+			if (opcode < RANDOMX_FREQ_IMULH_R)
+			{
+				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (4 << IGROUP_OPCODE_OFFSET);
+				*(compiled_program++) = inst.x;
+				continue;
+			}
+			opcode -= RANDOMX_FREQ_IMULH_R;
+
+			if (opcode < RANDOMX_FREQ_IMULH_M)
+			{
+				const uint32_t location = (src == dst) ? 3 : ((mod % 4) ? 1 : 2);
+				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (4 << IGROUP_OPCODE_OFFSET);
+				inst.x |= (imm_index << 8);
+				imm_buf[imm_index++] = inst.y;
+				*(compiled_program++) = inst.x;
+				continue;
+			}
+			opcode -= RANDOMX_FREQ_IMULH_M;
+
+			if (opcode < RANDOMX_FREQ_ISMULH_R)
+			{
+				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (5 << IGROUP_OPCODE_OFFSET);
+				*(compiled_program++) = inst.x;
+				continue;
+			}
+			opcode -= RANDOMX_FREQ_ISMULH_R;
+
+			if (opcode < RANDOMX_FREQ_ISMULH_M)
+			{
+				const uint32_t location = (src == dst) ? 3 : ((mod % 4) ? 1 : 2);
+				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (5 << IGROUP_OPCODE_OFFSET);
+				inst.x |= (imm_index << 8);
+				imm_buf[imm_index++] = inst.y;
+				*(compiled_program++) = inst.x;
+				continue;
+			}
+			opcode -= RANDOMX_FREQ_ISMULH_M;
+
+			if (opcode < RANDOMX_FREQ_IMUL_RCP)
+			{
+				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (3 << IGROUP_OPCODE_OFFSET);
+				inst.x |= (imm_index << 8) | (1 << IGROUP_SRC_IS_IMM64_OFFSET);
+				const uint64_t r = imul_rcp_value(inst.y);
+				imm_buf[imm_index] = ((const uint32_t*) &r)[0];
+				imm_buf[imm_index + 1] = ((const uint32_t*) &r)[1];
+				imm_index += 2;
+				*(compiled_program++) = inst.x;
+				continue;
+			}
+			opcode -= RANDOMX_FREQ_IMUL_RCP;
+
+			if (opcode < RANDOMX_FREQ_INEG_R)
+			{
+				inst.x = (dst << DST_OFFSET) | (6 << IGROUP_OPCODE_OFFSET);
+				*(compiled_program++) = inst.x;
+				continue;
+			}
+			opcode -= RANDOMX_FREQ_INEG_R;
+
+			if (opcode < RANDOMX_FREQ_IXOR_R)
+			{
+				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (7 << IGROUP_OPCODE_OFFSET);
+				if (src == dst)
+				{
+					inst.x |= (imm_index << 8) | (1 << IGROUP_SRC_IS_IMM32_OFFSET);
+					imm_buf[imm_index++] = inst.y;
+				}
+				*(compiled_program++) = inst.x;
+				continue;
+			}
+			opcode -= RANDOMX_FREQ_IXOR_R;
+
+			if (opcode < RANDOMX_FREQ_IXOR_M)
+			{
+				const uint32_t location = (src == dst) ? 3 : ((mod % 4) ? 1 : 2);
+				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (7 << IGROUP_OPCODE_OFFSET);
+				inst.x |= (imm_index << 8);
+				imm_buf[imm_index++] = inst.y;
+				*(compiled_program++) = inst.x;
+				continue;
+			}
+			opcode -= RANDOMX_FREQ_IXOR_M;
+
+			if (opcode < RANDOMX_FREQ_IROR_R)
+			{
+				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (8 << IGROUP_OPCODE_OFFSET);
+				if (src == dst)
+				{
+					inst.x |= (imm_index << 8) | (1 << IGROUP_SRC_IS_IMM32_OFFSET);
+					imm_buf[imm_index++] = inst.y;
+				}
+				*(compiled_program++) = inst.x;
+				continue;
+			}
+			opcode -= RANDOMX_FREQ_IROR_R;
+
+			if (opcode < RANDOMX_FREQ_ISWAP_R)
+			{
+				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (9 << IGROUP_OPCODE_OFFSET);
+				*(compiled_program++) = (src != dst) ? inst.x : INST_NOP;
+				continue;
+			}
+			opcode -= RANDOMX_FREQ_ISWAP_R;
 
 			*(compiled_program++) = inst.x;
 		}
@@ -267,10 +468,10 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 		spAddr1 &= ScratchpadL3Mask64;
 
 		uint64_t offset1, offset2;
-		asm("mul.wide.u32 %0,%2,%4;\n\tmul.wide.u32 %1,%3,%4;" : "=l"(offset1), "=l"(offset2) : "r"(spAddr0), "r"(spAddr1), "r"(batch_size));
+		asm("mad.wide.u32 %0,%2,%4,%5;\n\tmad.wide.u32 %1,%3,%4,%5;" : "=l"(offset1), "=l"(offset2) : "r"(spAddr0), "r"(spAddr1), "r"(batch_size), "l"(static_cast<uint64_t>(sub * 8)));
 
-		uint64_t* p0 = (uint64_t*)(scratchpad + offset1 + sub * 8);
-		uint64_t* p1 = (uint64_t*)(scratchpad + offset2 + sub * 8);
+		uint64_t* p0 = (uint64_t*)(scratchpad + offset1);
+		uint64_t* p1 = (uint64_t*)(scratchpad + offset2);
 
 		uint64_t* r = R + sub;
 		*r ^= *p0;
@@ -285,6 +486,7 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 
 		if (sub == 0)
 		{
+			#pragma unroll(1)
 			for (int ip = 0; ip < RANDOMX_PROGRAM_SIZE; ++ip)
 			{
 				uint32_t inst = compiled_program[ip];
@@ -292,13 +494,37 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 				asm("// INSTRUCTION DECODING BEGIN");
 
 				const uint32_t group = inst & 3;
-				uint64_t* dst_ptr = R + ((inst >> 2) & 7);
-				uint64_t* src_ptr = R + ((inst >> 5) & 7);
-				uint32_t* imm_ptr = imm_buf + ((inst >> 8) & 127);
+				uint64_t* dst_ptr = R + ((inst >> DST_OFFSET) & 7);
+				uint64_t* src_ptr = R + ((inst >> SRC_OFFSET) & 7);
+				uint32_t* imm_ptr = imm_buf + ((inst >> IMM_OFFSET) & 127);
 
 				uint64_t dst = *dst_ptr;
 				uint64_t src = *src_ptr;
-				uint2 imm = *(uint2*)(imm_ptr);
+				uint2 imm;
+				imm.x = imm_ptr[0];
+				imm.y = imm_ptr[1];
+
+				const uint32_t location = (inst >> (LOC_OFFSET - 3)) & 24;
+				if (location)
+				{
+					asm("// SCRATCHPAD READ BEGIN");
+
+					constexpr uint32_t masks = ((32 - 14) << 8) + ((32 - 18) << 16) + ((32 - 21) << 24);
+					uint32_t mask;
+					asm("bfe.u32 %0,%1,%2,8;" : "=r"(mask) : "r"(masks), "r"(location));
+					mask = 0xFFFFFFFFU >> mask;
+
+					uint32_t addr = (location == 24) ? 0 : static_cast<uint32_t>(src);
+					addr += static_cast<int32_t>(imm.x);
+					addr &= mask;
+
+					uint64_t offset;
+					asm("mad.wide.u32 %0,%1,%2,%3;" : "=l"(offset) : "r"(addr & 0xFFFFFFC0U), "r"(batch_size), "l"(static_cast<uint64_t>(addr & 0x38)));
+
+					src = *(uint64_t*)(scratchpad + offset);
+
+					asm("// SCRATCHPAD READ END");
+				}
 
 				asm("// INSTRUCTION DECODING END");
 
@@ -307,14 +533,61 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 				{
 					asm("// INTEGER GROUP BEGIN");
 
-					uint32_t shift = (inst >> 17) & 3;
-					src <<= shift;
+					if (inst & (1 << IGROUP_SRC_IS_IMM32_OFFSET)) src = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(imm.x)));
 
-					bool is_add = inst & (1 << 20);
-					bool is_add_imm32 = inst & (1 << 21);
+					const uint32_t opcode = (inst >> IGROUP_OPCODE_OFFSET) & 15;
+					switch (opcode)
+					{
+					case 0:
+						dst += static_cast<int32_t>(imm.x);
+					case 1:
+						{
+							const uint32_t shift = (inst >> IGROUP_SHIFT_OFFSET) & 3;
+							dst += src << shift;
+						}
+						break;
 
-					if (is_add) dst += src;
-					if (is_add_imm32) dst += static_cast<int32_t>(imm.x);
+					case 2:
+						dst -= src;
+						break;
+
+					case 3:
+						if (inst & (1 << IGROUP_SRC_IS_IMM64_OFFSET)) src = *((uint64_t*) &imm);
+						dst *= src;
+						break;
+
+					case 4:
+						dst = __umul64hi(dst, src);
+						break;
+
+					case 5:
+						dst = static_cast<uint64_t>(__mul64hi(static_cast<int64_t>(dst), static_cast<int64_t>(src)));
+						break;
+
+					case 6:
+						dst = static_cast<uint64_t>(-static_cast<int64_t>(dst));
+						break;
+
+					case 7:
+						dst ^= src;
+						break;
+
+					case 8:
+						{
+							const uint32_t shift = src & 63;
+							dst = (dst >> shift) | (dst << (64 - shift));
+						}
+						break;
+
+					case 9:
+						*src_ptr = dst;
+						dst = src;
+						break;
+
+					default:
+						__assume(false);
+						break;
+					}
 
 					*dst_ptr = dst;
 
