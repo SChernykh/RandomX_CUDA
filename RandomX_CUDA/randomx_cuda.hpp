@@ -408,7 +408,7 @@ __device__ void load_buffer(T (&dst_buf)[N], const void* src_buf)
 	}
 }
 
-__global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchpads, const void* dataset_ptr, uint32_t batch_size)
+__global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchpads, const void* dataset_ptr, uint32_t batch_size, uint32_t num_iterations, bool first, bool last)
 {
 	// 2 hashes per warp, 4 KB shared memory for VM states
 	__shared__ uint64_t vm_states_local[(VM_STATE_SIZE * 2) / sizeof(uint64_t)];
@@ -420,7 +420,6 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 	uint64_t* R = vm_states_local + (threadIdx.x / 8) * VM_STATE_SIZE / sizeof(uint64_t);
 	double* F = (double*)(R + 8);
 	double* E = (double*)(R + 16);
-	double* A = (double*)(R + 24);
 
 	const uint32_t global_index = blockIdx.x * blockDim.x + threadIdx.x;
 	const uint32_t idx = global_index / 8;
@@ -440,8 +439,8 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 
 	ulonglong2 eMask = ((ulonglong2*)(R + 18))[0];
 
-	uint32_t spAddr0 = mx;
-	uint32_t spAddr1 = ma;
+	uint32_t spAddr0 = first ? mx : 0;
+	uint32_t spAddr1 = first ? ma : 0;
 
 	uint8_t* scratchpad = ((uint8_t*) scratchpads) + idx * 64;
 
@@ -459,7 +458,7 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 	uint32_t* compiled_program = (uint32_t*)(R + (REGISTERS_SIZE + IMM_BUF_SIZE) / sizeof(uint64_t));
 
 	#pragma unroll(1)
-	for (int ic = 0; ic < RANDOMX_PROGRAM_ITERATIONS; ++ic)
+	for (int ic = 0; ic < num_iterations; ++ic)
 	{
 		const uint64_t spMix = *readReg0 ^ *readReg1;
 		spAddr0 ^= ((const uint32_t*) &spMix)[0];
@@ -617,7 +616,15 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 
 	uint64_t* p = ((uint64_t*) vm_states) + idx * (VM_STATE_SIZE / sizeof(uint64_t));
 	p[sub] = R[sub];
-	p[sub +  8] = bit_cast<uint64_t>(F[sub]) ^ bit_cast<uint64_t>(E[sub]);
-	p[sub + 16] = bit_cast<uint64_t>(E[sub]);
-	p[sub + 24] = bit_cast<uint64_t>(A[sub]);
+
+	if (last)
+	{
+		p[sub +  8] = bit_cast<uint64_t>(F[sub]) ^ bit_cast<uint64_t>(E[sub]);
+		p[sub + 16] = bit_cast<uint64_t>(E[sub]);
+	}
+	else if (sub == 0)
+	{
+		((uint32_t*)(p + 16))[0] = ma;
+		((uint32_t*)(p + 16))[1] = mx;
+	}
 }

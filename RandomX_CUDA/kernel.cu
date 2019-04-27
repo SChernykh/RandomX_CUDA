@@ -36,15 +36,15 @@ along with RandomX CUDA.  If not, see<http://www.gnu.org/licenses/>.
 #include "aes_cuda.hpp"
 #include "randomx_cuda.hpp"
 
-bool test_mining(bool validate);
+bool test_mining(bool validate, int bfactor);
 void tests();
 
 int main(int argc, char** argv)
 {
 	if (argc < 3)
 	{
-		printf("Usage: RandomX_CUDA.exe --[mine|test] device_id [--validate]\n");
-		printf("Examples:\nRandomX_CUDA.exe --test 0\nRandomX_CUDA.exe --mine 0 --validate\n");
+		printf("Usage: RandomX_CUDA.exe --mine device_id [--validate] [--bfactor N]\n");
+		printf("Examples:\nRandomX_CUDA.exe --test 0\nRandomX_CUDA.exe --mine 0 --validate --bfactor 3\n");
 		return 0;
 	}
 
@@ -61,8 +61,25 @@ int main(int argc, char** argv)
 	if (cudaGetDeviceFlags(&flags) == cudaSuccess)
 		cudaSetDeviceFlags(flags | cudaDeviceScheduleBlockingSync);
 
+	bool validate = false;
+	int bfactor = 0;
+	for (int i = 0; i < argc; ++i)
+	{
+		if (strcmp(argv[i], "--validate") == 0)
+		{
+			validate = true;
+		}
+
+		if ((strcmp(argv[i], "--bfactor") == 0) && (i + 1 < argc))
+		{
+			bfactor = atoi(argv[i + 1]);
+			if (bfactor < 0) bfactor = 0;
+			if (bfactor > 10) bfactor = 10;
+		}
+	}
+
 	if (strcmp(argv[1], "--mine") == 0)
-		test_mining((argc > 3) && (strcmp(argv[3], "--validate") == 0));
+		test_mining(validate, bfactor);
 	else if (strcmp(argv[1], "--test") == 0)
 		tests();
 
@@ -104,8 +121,10 @@ private:
 	void* p;
 };
 
-bool test_mining(bool validate)
+bool test_mining(bool validate, int bfactor)
 {
+	printf("Testing mining: CPU validation is %s, bfactor is %d\n", validate ? "ON" : "OFF", bfactor);
+
 	cudaError_t cudaStatus;
 
 	size_t free_mem, total_mem;
@@ -306,7 +325,8 @@ bool test_mining(bool validate)
 			}
 
 			init_vm<<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu);
-			execute_vm<<<batch_size / 2, 2 * 8>>>(vm_states_gpu, scratchpads_gpu, dataset_gpu, batch_size);
+			for (int j = 0, n = 1 << bfactor; j < n; ++j)
+				execute_vm<<<batch_size / 2, 2 * 8>>>(vm_states_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
 
 			if (i == PROGRAM_COUNT - 1)
 			{
