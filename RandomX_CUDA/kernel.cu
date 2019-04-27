@@ -57,10 +57,9 @@ int main(int argc, char** argv)
 		return 1;
 	}
 
-	// Lowers CPU usage to almost 0, but reduces test results
-	//uint32_t flags;
-	//if (cudaGetDeviceFlags(&flags) == cudaSuccess)
-	//	cudaSetDeviceFlags(flags | cudaDeviceScheduleBlockingSync);
+	uint32_t flags;
+	if (cudaGetDeviceFlags(&flags) == cudaSuccess)
+		cudaSetDeviceFlags(flags | cudaDeviceScheduleBlockingSync);
 
 	if (strcmp(argv[1], "--mine") == 0)
 		test_mining((argc > 3) && (strcmp(argv[3], "--validate") == 0));
