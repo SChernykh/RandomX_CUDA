@@ -233,8 +233,45 @@ bool test_mining(bool validate)
 
 	time_point<steady_clock> prev_time;
 
+	std::vector<uint8_t> hashes, hashes_check;
+	hashes.resize(batch_size * 32);
+	hashes_check.resize(batch_size * 32);
+
+	std::vector<std::thread> threads;
+
 	for (uint32_t nonce = 0, k = 0; nonce < 0xFFFFFFFFUL; nonce += batch_size, ++k)
 	{
+		if (validate)
+		{
+			std::atomic<uint32_t> k;
+			k = 0;
+
+			auto validation_thread = [&k, myDataset, &hashes_check, batch_size, nonce]() {
+				randomx_vm *myMachine = randomx_create_vm((randomx_flags)(RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_LARGE_PAGES), nullptr, myDataset);
+
+				uint8_t buf[sizeof(blockTemplate)];
+				memcpy(buf, blockTemplate, sizeof(buf));
+
+				for (;;)
+				{
+					const uint32_t i = k.fetch_add(1);
+					if (i >= batch_size)
+						break;
+
+					*(uint32_t*)(buf + 39) = nonce + i;
+
+					randomx_calculate_hash(myMachine, buf, sizeof(buf), (hashes_check.data() + i * 32));
+				}
+				randomx_destroy_vm(myMachine);
+			};
+
+			const uint32_t n = std::max(std::thread::hardware_concurrency() / 2, 1U);
+
+			threads.clear();
+			for (uint32_t i = 0; i < n; ++i)
+				threads.emplace_back(validation_thread);
+		}
+
 		time_point<steady_clock> cur_time = high_resolution_clock::now();
 		if (k > 0)
 		{
@@ -305,41 +342,9 @@ bool test_mining(bool validate)
 			return false;
 		}
 
-
 		if (validate)
 		{
-			std::vector<uint8_t> hashes, hashes_check;
-			hashes.resize(batch_size * 32);
-			hashes_check.resize(batch_size * 32);
-
 			cudaMemcpy(hashes.data(), hashes_gpu, batch_size * 32, cudaMemcpyDeviceToHost);
-
-			std::atomic<uint32_t> k;
-			k = 0;
-
-			auto validation_thread = [&k, myDataset, &hashes_check, batch_size, nonce]() {
-				randomx_vm *myMachine = randomx_create_vm((randomx_flags)(RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_LARGE_PAGES), nullptr, myDataset);
-
-				uint8_t buf[sizeof(blockTemplate)];
-				memcpy(buf, blockTemplate, sizeof(buf));
-
-				for (;;)
-				{
-					const uint32_t i = k.fetch_add(1);
-					if (i >= batch_size)
-						break;
-
-					*(uint32_t*)(buf + 39) = nonce + i;
-
-					randomx_calculate_hash(myMachine, buf, sizeof(buf), (hashes_check.data() + i * 32));
-				}
-				randomx_destroy_vm(myMachine);
-			};
-
-			const uint32_t n = std::max(std::thread::hardware_concurrency() / 2, 1U);
-			std::vector<std::thread> threads;
-			for (uint32_t i = 0; i < n; ++i)
-				threads.emplace_back(validation_thread);
 
 			for (auto& thread : threads)
 				thread.join();
