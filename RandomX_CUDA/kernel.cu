@@ -123,23 +123,24 @@ bool test_mining(bool validate)
 	printf("%zu MB GPU memory free\n", free_mem >> 20);
 	printf("%zu MB GPU memory total\n", total_mem >> 20);
 
-	// There should be enough GPU memory for the 2 GB dataset, 32 scratchpads and 64 MB for everything else
-	if (free_mem <= randomx_dataset_item_count() * RANDOMX_DATASET_ITEM_SIZE + (32U * SCRATCHPAD_SIZE) + (64U << 20))
+	// There should be enough GPU memory for the 2080 MB dataset, 32 scratchpads and 64 MB for everything else
+	const size_t dataset_size = randomx_dataset_item_count() * RANDOMX_DATASET_ITEM_SIZE;
+	if (free_mem <= dataset_size + (32U * SCRATCHPAD_SIZE) + (64U << 20))
 	{
 		fprintf(stderr, "Not enough free GPU memory!");
 		return false;
 	}
 
-	const uint32_t batch_size = static_cast<uint32_t>((((free_mem - randomx_dataset_item_count() * RANDOMX_DATASET_ITEM_SIZE - (64U << 20)) / SCRATCHPAD_SIZE) / 32) * 32);
+	const uint32_t batch_size = static_cast<uint32_t>((((free_mem - dataset_size - (64U << 20)) / SCRATCHPAD_SIZE) / 32) * 32);
 
-	GPUPtr dataset_gpu(randomx_dataset_item_count() * RANDOMX_DATASET_ITEM_SIZE);
+	GPUPtr dataset_gpu(dataset_size);
 	if (!dataset_gpu)
 	{
 		fprintf(stderr, "Failed to allocate GPU memory for dataset!");
 		return false;
 	}
 
-	printf("Allocated 2 GB dataset\n");
+	printf("Allocated %.0f MB dataset\n", dataset_size / 1048576.0);
 
 	printf("Initializing dataset...");
 
@@ -162,7 +163,7 @@ bool test_mining(bool validate)
 
 		randomx_release_cache(myCache);
 
-		cudaStatus = cudaMemcpy(dataset_gpu, randomx_get_dataset_memory(myDataset), randomx_dataset_item_count() * RANDOMX_DATASET_ITEM_SIZE, cudaMemcpyHostToDevice);
+		cudaStatus = cudaMemcpy(dataset_gpu, randomx_get_dataset_memory(myDataset), dataset_size, cudaMemcpyHostToDevice);
 		if (cudaStatus != cudaSuccess) {
 			fprintf(stderr, "Failed to copy dataset to GPU: %s\n", cudaGetErrorString(cudaStatus));
 			return false;

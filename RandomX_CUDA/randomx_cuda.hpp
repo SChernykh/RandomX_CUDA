@@ -145,6 +145,8 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 		uint32_t addressRegisters = static_cast<uint32_t>(entropy[12]);
 		addressRegisters = ((addressRegisters & 1) | (((addressRegisters & 2) ? 3U : 2U) << 8) | (((addressRegisters & 4) ? 5U : 4U) << 16) | (((addressRegisters & 8) ? 7U : 6U) << 24)) * sizeof(uint64_t);
 
+		uint32_t datasetOffset = (entropy[13] & randomx::DatasetExtraItems) * randomx::CacheLineSize;
+
 		ulonglong2 eMask = *(ulonglong2*)(entropy + 14);
 		eMask.x = (eMask.x & ((1ULL << 22) - 1)) | ((1023ULL - 240) << 52);
 		eMask.y = (eMask.y & ((1ULL << 22) - 1)) | ((1023ULL - 240) << 52);
@@ -152,6 +154,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 		((uint32_t*)(R + 16))[0] = ma;
 		((uint32_t*)(R + 16))[1] = mx;
 		((uint32_t*)(R + 16))[2] = addressRegisters;
+		((uint32_t*)(R + 16))[3] = datasetOffset;
 		((ulonglong2*)(R + 18))[0] = eMask;
 
 		uint2* src_program = (uint2*)(entropy + 128 / sizeof(uint64_t));
@@ -204,7 +207,7 @@ __device__ void load_buffer(T (&dst_buf)[N], const void* src_buf)
 	}
 }
 
-__global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchpads, const void* dataset, uint32_t batch_size)
+__global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchpads, const void* dataset_ptr, uint32_t batch_size)
 {
 	// 2 hashes per warp, 4 KB shared memory for VM states
 	__shared__ uint64_t vm_states_local[(VM_STATE_SIZE * 2) / sizeof(uint64_t)];
@@ -230,6 +233,9 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 	const uint64_t* readReg1 = (uint64_t*)(((uint8_t*) R) + ((addressRegisters >> 8) & 0xff));
 	const uint32_t* readReg2 = (uint32_t*)(((uint8_t*) R) + ((addressRegisters >> 16) & 0xff));
 	const uint32_t* readReg3 = (uint32_t*)(((uint8_t*) R) + (addressRegisters >> 24));
+
+	const uint32_t datasetOffset = ((uint32_t*)(R + 16))[3];
+	const uint8_t* dataset = ((const uint8_t*) dataset_ptr) + datasetOffset;
 
 	ulonglong2 eMask = ((ulonglong2*)(R + 18))[0];
 
@@ -322,7 +328,7 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 		mx ^= *readReg2 ^ *readReg3;
 		mx &= CacheLineAlignMask;
 
-		const uint64_t next_r = *r ^ *(const uint64_t*)(((const uint8_t*) dataset) + ma + sub * 8);
+		const uint64_t next_r = *r ^ *(const uint64_t*)(dataset + ma + sub * 8);
 		*r = next_r;
 
 		uint32_t tmp = ma;
