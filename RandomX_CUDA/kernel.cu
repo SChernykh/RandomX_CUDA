@@ -238,32 +238,32 @@ bool test_mining(bool validate)
 	hashes_check.resize(batch_size * 32);
 
 	std::vector<std::thread> threads;
+	std::atomic<uint32_t> nonce_counter;
 
 	for (uint32_t nonce = 0, k = 0; nonce < 0xFFFFFFFFUL; nonce += batch_size, ++k)
 	{
+		auto validation_thread = [&nonce_counter, myDataset, &hashes_check, batch_size, nonce]() {
+			randomx_vm *myMachine = randomx_create_vm((randomx_flags)(RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_LARGE_PAGES), nullptr, myDataset);
+
+			uint8_t buf[sizeof(blockTemplate)];
+			memcpy(buf, blockTemplate, sizeof(buf));
+
+			for (;;)
+			{
+				const uint32_t i = nonce_counter.fetch_add(1);
+				if (i >= batch_size)
+					break;
+
+				*(uint32_t*)(buf + 39) = nonce + i;
+
+				randomx_calculate_hash(myMachine, buf, sizeof(buf), (hashes_check.data() + i * 32));
+			}
+			randomx_destroy_vm(myMachine);
+		};
+
 		if (validate)
 		{
-			std::atomic<uint32_t> k;
-			k = 0;
-
-			auto validation_thread = [&k, myDataset, &hashes_check, batch_size, nonce]() {
-				randomx_vm *myMachine = randomx_create_vm((randomx_flags)(RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_LARGE_PAGES), nullptr, myDataset);
-
-				uint8_t buf[sizeof(blockTemplate)];
-				memcpy(buf, blockTemplate, sizeof(buf));
-
-				for (;;)
-				{
-					const uint32_t i = k.fetch_add(1);
-					if (i >= batch_size)
-						break;
-
-					*(uint32_t*)(buf + 39) = nonce + i;
-
-					randomx_calculate_hash(myMachine, buf, sizeof(buf), (hashes_check.data() + i * 32));
-				}
-				randomx_destroy_vm(myMachine);
-			};
+			nonce_counter = 0;
 
 			const uint32_t n = std::max(std::thread::hardware_concurrency() / 2, 1U);
 
