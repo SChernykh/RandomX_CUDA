@@ -112,7 +112,7 @@ __device__ void test_memory_access(uint64_t* r, uint8_t* scratchpad, uint32_t ba
 // Bits 17-18: src shift (0-3)
 // Bit 19: src=imm32
 // Bit 20: src=imm64
-// Bits 21-24: instruction (add_rs, add, sub, mul, umul_hi, imul_hi, neg, xor, ror, swap)
+// Bits 21-24: instruction (add_rs, add, sub, mul, umul_hi, imul_hi, neg, xor, ror, swap, store)
 //
 
 #define DST_OFFSET						2
@@ -387,6 +387,17 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 			}
 			opcode -= RANDOMX_FREQ_ISWAP_R;
 
+			if (opcode < RANDOMX_FREQ_ISTORE)
+			{
+				const uint32_t location = (((mod >> 2) & 7) == 0) ? 3 : ((mod % 4) ? 1 : 2);
+				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (10 << IGROUP_OPCODE_OFFSET);
+				inst.x |= (imm_index << 8);
+				imm_buf[imm_index++] = inst.y;
+				*(compiled_program++) = inst.x;
+				continue;
+			}
+			opcode -= RANDOMX_FREQ_ISTORE;
+
 			*(compiled_program++) = inst.x;
 		}
 	}
@@ -503,26 +514,31 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 				imm.x = imm_ptr[0];
 				imm.y = imm_ptr[1];
 
+				const uint32_t opcode = (inst >> IGROUP_OPCODE_OFFSET) & 15;
 				const uint32_t location = (inst >> (LOC_OFFSET - 3)) & 24;
 				if (location)
 				{
-					asm("// SCRATCHPAD READ BEGIN");
+					asm("// SCRATCHPAD ACCESS BEGIN");
 
 					constexpr uint32_t masks = ((32 - 14) << 8) + ((32 - 18) << 16) + ((32 - 21) << 24);
 					uint32_t mask;
 					asm("bfe.u32 %0,%1,%2,8;" : "=r"(mask) : "r"(masks), "r"(location));
 					mask = 0xFFFFFFFFU >> mask;
 
-					uint32_t addr = (location == 24) ? 0 : static_cast<uint32_t>(src);
+					const bool is_read = (opcode != 10);
+					uint32_t addr = is_read ? ((location == 24) ? 0 : static_cast<uint32_t>(src)) : static_cast<uint32_t>(dst);
 					addr += static_cast<int32_t>(imm.x);
 					addr &= mask;
 
 					uint64_t offset;
 					asm("mad.wide.u32 %0,%1,%2,%3;" : "=l"(offset) : "r"(addr & 0xFFFFFFC0U), "r"(batch_size), "l"(static_cast<uint64_t>(addr & 0x38)));
 
-					src = *(uint64_t*)(scratchpad + offset);
+					if (is_read)
+						src = *(uint64_t*)(scratchpad + offset);
+					else
+						*(uint64_t*)(scratchpad + offset) = src;
 
-					asm("// SCRATCHPAD READ END");
+					asm("// SCRATCHPAD ACCESS END");
 				}
 
 				asm("// INSTRUCTION DECODING END");
@@ -534,7 +550,6 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 
 					if (inst & (1 << IGROUP_SRC_IS_IMM32_OFFSET)) src = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(imm.x)));
 
-					const uint32_t opcode = (inst >> IGROUP_OPCODE_OFFSET) & 15;
 					switch (opcode)
 					{
 					case 0:
