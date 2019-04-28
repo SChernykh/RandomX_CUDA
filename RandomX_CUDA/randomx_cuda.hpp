@@ -27,7 +27,7 @@ constexpr size_t ENTROPY_SIZE = 128 + 2048;
 constexpr size_t VM_STATE_SIZE = 2048;
 constexpr size_t PROGRAM_COUNT = 8;
 constexpr size_t REGISTERS_SIZE = 256;
-constexpr size_t IMM_BUF_SIZE = 512;
+constexpr size_t IMM_BUF_SIZE = 768;
 
 constexpr int ScratchpadL3Mask64 = (1 << 21) - 64;
 
@@ -97,34 +97,34 @@ __device__ void test_memory_access(uint64_t* r, uint8_t* scratchpad, uint32_t ba
 // VM state:
 //
 // Bytes 0-255: registers
-// Bytes 256-767: imm32 values (up to 128 values can be stored). IMUL_RCP uses 2 consecutive imm32 values.
-// Bytes 768-2047: up to 320 instructions
+// Bytes 256-1023: imm32 values (up to 192 values can be stored). IMUL_RCP uses 2 consecutive imm32 values.
+// Bytes 1024-2047: up to 256 instructions
 //
 // Instruction encoding:
 //
 // Bits 0-1: instruction group (integer, FP, store, conditional)
 // Bits 2-4: dst (0-7)
 // Bits 5-7: src (0-7)
-// Bits 8-14: imm32/64 offset (in DWORDs, 0-127)
-// Bits 15-19: src location (register, L1, L2, L3)
+// Bits 8-15: imm32/64 offset (in DWORDs, 0-191)
+// Bits 16-20: src location (register, L1, L2, L3)
 //
 // Integer group:
-// Bits 20-21: src shift (0-3)
-// Bit 22: src=imm32
-// Bit 23: src=imm64
-// Bit 24: src = -src
-// Bits 25-28: instruction (add_rs, add, mul, umul_hi, imul_hi, neg, xor, ror, swap, store)
+// Bits 21-22: src shift (0-3)
+// Bit 23: src=imm32
+// Bit 24: src=imm64
+// Bit 25: src = -src
+// Bits 26-29: instruction (add_rs, add, mul, umul_hi, imul_hi, neg, xor, ror, swap, store)
 //
 
 #define DST_OFFSET						2
 #define SRC_OFFSET						5
 #define IMM_OFFSET						8
-#define LOC_OFFSET						15
-#define IGROUP_SHIFT_OFFSET				20
-#define IGROUP_SRC_IS_IMM32_OFFSET		22
-#define IGROUP_SRC_IS_IMM64_OFFSET		23
-#define IGROUP_NEGATIVE_SRC				24
-#define IGROUP_OPCODE_OFFSET			25
+#define LOC_OFFSET						16
+#define IGROUP_SHIFT_OFFSET				21
+#define IGROUP_SRC_IS_IMM32_OFFSET		23
+#define IGROUP_SRC_IS_IMM64_OFFSET		24
+#define IGROUP_NEGATIVE_SRC				25
+#define IGROUP_OPCODE_OFFSET			26
 
 #define INST_NOP						3
 
