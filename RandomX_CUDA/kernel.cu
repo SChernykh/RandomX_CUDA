@@ -240,14 +240,14 @@ bool test_mining(bool validate, int bfactor)
 		return false;
 	}
 
+	printf("%zu MB free GPU memory left\n", free_mem >> 20);
+
 	cudaStatus = cudaFuncSetCacheConfig(execute_vm, cudaFuncCachePreferShared);
 	if (cudaStatus != cudaSuccess)
 	{
 		fprintf(stderr, "Failed to set cache config for execute_vm!");
 		return false;
 	}
-
-	printf("%zu MB free GPU memory left\n", free_mem >> 20);
 
 	time_point<steady_clock> prev_time;
 
@@ -295,9 +295,9 @@ bool test_mining(bool validate, int bfactor)
 		{
 			const double dt = duration_cast<nanoseconds>(cur_time - prev_time).count() / 1e9;
 			if (validate)
-				printf("%u hashes validated successfully, %.0f h/s\r", nonce, batch_size / dt);
+				printf("%u hashes validated successfully, %.0f h/s\t\r", nonce, batch_size / dt);
 			else
-				printf("%.0f h/s        \r", batch_size / dt);
+				printf("%.0f h/s\t\r", batch_size / dt);
 		}
 		prev_time = cur_time;
 
@@ -370,7 +370,15 @@ bool test_mining(bool validate, int bfactor)
 
 			if (memcmp(hashes.data(), hashes_check.data(), batch_size * 32) != 0)
 			{
-				fprintf(stderr, "\nCPU validation error\n");
+				fprintf(stderr, "\nCPU validation error, ");
+				for (uint32_t i = 0; i < batch_size * 32; ++i)
+				{
+					if (hashes[i] != hashes_check[i])
+					{
+						fprintf(stderr, "failing nonce = %u\n", nonce + i / 32);
+						break;
+					}
+				}
 				return false;
 			}
 		}
