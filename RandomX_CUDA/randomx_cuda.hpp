@@ -106,27 +106,31 @@ __device__ void test_memory_access(uint64_t* r, uint8_t* scratchpad, uint32_t ba
 // Bits 2-4: dst (0-7)
 // Bits 5-7: src (0-7)
 // Bits 8-14: imm32/64 offset (in DWORDs, 0-127)
-// Bits 15-16: src location (register, L1, L2, L3)
+// Bits 15-19: src location (register, L1, L2, L3)
 //
 // Integer group:
-// Bits 17-18: src shift (0-3)
-// Bit 19: src=imm32
-// Bit 20: src=imm64
-// Bit 21: src = -src
-// Bits 22-25: instruction (add_rs, add, mul, umul_hi, imul_hi, neg, xor, ror, swap, store)
+// Bits 20-21: src shift (0-3)
+// Bit 22: src=imm32
+// Bit 23: src=imm64
+// Bit 24: src = -src
+// Bits 25-28: instruction (add_rs, add, mul, umul_hi, imul_hi, neg, xor, ror, swap, store)
 //
 
 #define DST_OFFSET						2
 #define SRC_OFFSET						5
 #define IMM_OFFSET						8
 #define LOC_OFFSET						15
-#define IGROUP_SHIFT_OFFSET				17
-#define IGROUP_SRC_IS_IMM32_OFFSET		19
-#define IGROUP_SRC_IS_IMM64_OFFSET		20
-#define IGROUP_NEGATIVE_SRC				21
-#define IGROUP_OPCODE_OFFSET			22
+#define IGROUP_SHIFT_OFFSET				20
+#define IGROUP_SRC_IS_IMM32_OFFSET		22
+#define IGROUP_SRC_IS_IMM64_OFFSET		23
+#define IGROUP_NEGATIVE_SRC				24
+#define IGROUP_OPCODE_OFFSET			25
 
 #define INST_NOP						3
+
+#define LOC_L1 (32 - 14)
+#define LOC_L2 (32 - 18)
+#define LOC_L3 (32 - 21)
 
 __device__ uint64_t imul_rcp_value(uint32_t divisor)
 {
@@ -236,7 +240,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 
 			if (opcode < RANDOMX_FREQ_IADD_M)
 			{
-				const uint32_t location = (src == dst) ? 3 : ((mod % 4) ? 1 : 2);
+				const uint32_t location = (src == dst) ? LOC_L3 : ((mod % 4) ? LOC_L1 : LOC_L2);
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (1 << IGROUP_OPCODE_OFFSET);
 				inst.x |= (imm_index << 8);
 				imm_buf[imm_index++] = inst.y;
@@ -264,7 +268,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 
 			if (opcode < RANDOMX_FREQ_ISUB_M)
 			{
-				const uint32_t location = (src == dst) ? 3 : ((mod % 4) ? 1 : 2);
+				const uint32_t location = (src == dst) ? LOC_L3 : ((mod % 4) ? LOC_L1 : LOC_L2);
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (1 << IGROUP_OPCODE_OFFSET) | (1 << IGROUP_NEGATIVE_SRC);
 				inst.x |= (imm_index << 8);
 				imm_buf[imm_index++] = inst.y;
@@ -292,7 +296,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 
 			if (opcode < RANDOMX_FREQ_IMUL_M)
 			{
-				const uint32_t location = (src == dst) ? 3 : ((mod % 4) ? 1 : 2);
+				const uint32_t location = (src == dst) ? LOC_L3 : ((mod % 4) ? LOC_L1 : LOC_L2);
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (2 << IGROUP_OPCODE_OFFSET);
 				inst.x |= (imm_index << 8);
 				imm_buf[imm_index++] = inst.y;
@@ -315,7 +319,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 
 			if (opcode < RANDOMX_FREQ_IMULH_M)
 			{
-				const uint32_t location = (src == dst) ? 3 : ((mod % 4) ? 1 : 2);
+				const uint32_t location = (src == dst) ? LOC_L3 : ((mod % 4) ? LOC_L1 : LOC_L2);
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (3 << IGROUP_OPCODE_OFFSET);
 				inst.x |= (imm_index << 8);
 				imm_buf[imm_index++] = inst.y;
@@ -338,7 +342,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 
 			if (opcode < RANDOMX_FREQ_ISMULH_M)
 			{
-				const uint32_t location = (src == dst) ? 3 : ((mod % 4) ? 1 : 2);
+				const uint32_t location = (src == dst) ? LOC_L3 : ((mod % 4) ? LOC_L1 : LOC_L2);
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (4 << IGROUP_OPCODE_OFFSET);
 				inst.x |= (imm_index << 8);
 				imm_buf[imm_index++] = inst.y;
@@ -392,7 +396,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 
 			if (opcode < RANDOMX_FREQ_IXOR_M)
 			{
-				const uint32_t location = (src == dst) ? 3 : ((mod % 4) ? 1 : 2);
+				const uint32_t location = (src == dst) ? LOC_L3 : ((mod % 4) ? LOC_L1 : LOC_L2);
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (6 << IGROUP_OPCODE_OFFSET);
 				inst.x |= (imm_index << 8);
 				imm_buf[imm_index++] = inst.y;
@@ -434,7 +438,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 
 			if (opcode < RANDOMX_FREQ_ISTORE)
 			{
-				const uint32_t location = (((mod >> 2) & 7) == 0) ? 3 : ((mod % 4) ? 1 : 2);
+				const uint32_t location = (((mod >> 2) & 7) == 0) ? LOC_L3 : ((mod % 4) ? LOC_L1 : LOC_L2);
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (9 << IGROUP_OPCODE_OFFSET);
 				inst.x |= (imm_index << 8);
 				imm_buf[imm_index++] = inst.y;
@@ -541,7 +545,7 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 
 		if (sub == 0)
 		{
-			#pragma unroll(1)
+			#pragma unroll(2)
 			for (int ip = 0; ip < RANDOMX_PROGRAM_SIZE; ++ip)
 			{
 				uint32_t inst = compiled_program[ip];
@@ -560,7 +564,7 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 				imm.y = imm_ptr[1];
 
 				const uint32_t opcode = (inst >> IGROUP_OPCODE_OFFSET) & 15;
-				const uint32_t location = (inst >> (LOC_OFFSET - 3)) & 24;
+				const uint32_t location = (inst >> LOC_OFFSET) & 31;
 
 				asm("// INSTRUCTION DECODING END");
 
@@ -568,13 +572,10 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 				{
 					asm("// SCRATCHPAD ACCESS BEGIN");
 
-					constexpr uint32_t masks = ((32 - 14) << 8) + ((32 - 18) << 16) + ((32 - 21) << 24);
-					uint32_t mask;
-					asm("bfe.u32 %0,%1,%2,8;" : "=r"(mask) : "r"(masks), "r"(location));
-					mask = 0xFFFFFFFFU >> mask;
+					const uint32_t mask = 0xFFFFFFFFU >> location;
 
 					const bool is_read = (opcode != 9);
-					uint32_t addr = is_read ? ((location == 24) ? 0 : static_cast<uint32_t>(src)) : static_cast<uint32_t>(dst);
+					uint32_t addr = is_read ? ((location == LOC_L3) ? 0 : static_cast<uint32_t>(src)) : static_cast<uint32_t>(dst);
 					addr += static_cast<int32_t>(imm.x);
 					addr &= mask;
 
