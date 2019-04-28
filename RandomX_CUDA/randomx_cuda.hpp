@@ -210,7 +210,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 
 			if (opcode < RANDOMX_FREQ_IADD_RS)
 			{
-				const uint32_t shift = mod >> 6;
+				const uint32_t shift = mod % 4;
 
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (shift << IGROUP_SHIFT_OFFSET);
 
