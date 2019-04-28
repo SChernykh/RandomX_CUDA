@@ -779,7 +779,7 @@ BB1_5:
 BB1_6:
 	ld.shared.u32 	%r35, [%r186+1024];
 	shr.u32 	%r105, %r35, 6;
-	and.b32  	%r106, %r105, 508;
+	and.b32  	%r106, %r105, 1020;
 	add.s32 	%r107, %r14, %r106;
 	// inline asm
 	// INSTRUCTION DECODING BEGIN
@@ -983,7 +983,7 @@ BB1_36:
 	shl.b32 	%r140, %r139, 3;
 	add.s32 	%r45, %r64, %r140;
 	shr.u32 	%r141, %r43, 6;
-	and.b32  	%r142, %r141, 508;
+	and.b32  	%r142, %r141, 1020;
 	add.s32 	%r143, %r42, %r142;
 	ld.shared.u64 	%rd142, [%r44];
 	ld.shared.u64 	%rd139, [%r45];

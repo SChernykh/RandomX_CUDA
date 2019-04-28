@@ -555,7 +555,7 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 				const uint32_t group = inst & 3;
 				uint64_t* dst_ptr = (uint64_t*)((uint8_t*)(R) + ((inst >> DST_OFFSET) & 7) * 8);
 				uint64_t* src_ptr = (uint64_t*)((uint8_t*)(R) + ((inst >> SRC_OFFSET) & 7) * 8);
-				uint32_t* imm_ptr = imm_buf + ((inst >> IMM_OFFSET) & 127);
+				uint32_t* imm_ptr = imm_buf + ((inst >> IMM_OFFSET) & 255);
 
 				uint64_t dst = *dst_ptr;
 				uint64_t src = *src_ptr;
