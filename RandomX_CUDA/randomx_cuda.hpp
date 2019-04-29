@@ -447,6 +447,40 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 			}
 			opcode -= RANDOMX_FREQ_ISTORE;
 
+			if (opcode < RANDOMX_FREQ_COND_R)
+			{
+				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (10 << IGROUP_OPCODE_OFFSET);
+				inst.x |= (imm_index << 8);
+
+				uint32_t target = 0xFFFFFFFFU;
+				uint32_t creg = 0;
+				for (uint32_t j = 0; j < 8; ++j)
+				{
+					uint64_t k;
+					asm("bfe.u64 %0,%1,%2,8;" : "=l"(k) : "l"(registerUsage), "r"(j * 8));
+					if (k < target)
+					{
+						target = k;
+						creg = j;
+					}
+				}
+
+				const uint32_t cshift = (mod >> 5);
+				const uint32_t cond = (mod >> 2) % 8;
+
+				imm_buf[imm_index] = inst.y;
+				imm_buf[imm_index + 1] = cshift | (creg << 3) | (target << 6) | (cond << 14);
+				imm_index += 2;
+
+				const uint32_t tmp = i | (i << 8);
+				registerUsage = tmp | (tmp << 16);
+				registerUsage |= registerUsage << 32;
+
+				*(compiled_program++) = inst.x;
+				continue;
+			}
+			opcode -= RANDOMX_FREQ_COND_R;
+
 			*(compiled_program++) = inst.x;
 		}
 	}
