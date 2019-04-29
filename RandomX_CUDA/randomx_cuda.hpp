@@ -579,8 +579,8 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 
 		if (sub == 0)
 		{
-			#pragma unroll(2)
-			for (int ip = 0; ip < RANDOMX_PROGRAM_SIZE; ++ip)
+			#pragma unroll(1)
+			for (uint32_t ip = 0; ip < RANDOMX_PROGRAM_SIZE; ++ip)
 			{
 				uint32_t inst = compiled_program[ip];
 
@@ -674,6 +674,28 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 					case 8:
 						*src_ptr = dst;
 						dst = src;
+						break;
+
+					case 10:
+						{
+							const uint32_t cshift = imm.y & 7;
+							const uint32_t creg_index = (imm.y >> 3) & 7;
+							const uint32_t branch_target = (imm.y >> 6) & 255;
+							uint64_t* cond_reg_ptr = (uint64_t*)((uint8_t*)(R) + creg_index * 8);
+
+							uint64_t creg = *cond_reg_ptr;
+							creg += (1U << cshift);
+							*cond_reg_ptr = creg;
+
+							if ((creg & (((1U << RANDOMX_CONDITION_BITS) - 1) << cshift)) == 0)
+							{
+								ip = branch_target - 1;
+								break;
+							}
+
+							// TODO: increment dst depending on condition
+							const uint32_t cond = (imm.y >> 14) & 7;
+						}
 						break;
 
 					default:
