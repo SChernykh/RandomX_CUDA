@@ -708,7 +708,7 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 					asm("// INTEGER GROUP END");
 				}
 
-				__syncwarp((1U << 0) | (8U << 0));
+				//__syncwarp((1U << 0) | (1U << 8));
 			}
 		}
 
