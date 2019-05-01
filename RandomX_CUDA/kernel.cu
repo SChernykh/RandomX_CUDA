@@ -257,11 +257,12 @@ bool test_mining(bool validate, int bfactor)
 
 	std::vector<std::thread> threads;
 	std::atomic<uint32_t> nonce_counter;
+	bool cpu_limited = false;
 
 	for (uint32_t nonce = 0, k = 0; nonce < 0xFFFFFFFFUL; nonce += batch_size, ++k)
 	{
 		auto validation_thread = [&nonce_counter, myDataset, &hashes_check, batch_size, nonce]() {
-			randomx_vm *myMachine = randomx_create_vm((randomx_flags)(RANDOMX_FLAG_FULL_MEM /*| RANDOMX_FLAG_JIT*/ | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_LARGE_PAGES), nullptr, myDataset);
+			randomx_vm *myMachine = randomx_create_vm((randomx_flags)(RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_LARGE_PAGES), nullptr, myDataset);
 
 			uint8_t buf[sizeof(blockTemplate)];
 			memcpy(buf, blockTemplate, sizeof(buf));
@@ -295,7 +296,7 @@ bool test_mining(bool validate, int bfactor)
 		{
 			const double dt = duration_cast<nanoseconds>(cur_time - prev_time).count() / 1e9;
 			if (validate)
-				printf("%u hashes validated successfully, %.0f h/s\t\r", nonce, batch_size / dt);
+				printf("%u hashes validated successfully, %.0f h/s%s\t\r", nonce, batch_size / dt, cpu_limited ? ", limited by CPU" : "");
 			else
 				printf("%.0f h/s\t\r", batch_size / dt);
 		}
@@ -364,6 +365,8 @@ bool test_mining(bool validate, int bfactor)
 		if (validate)
 		{
 			cudaMemcpy(hashes.data(), hashes_gpu, batch_size * 32, cudaMemcpyDeviceToHost);
+
+			cpu_limited = nonce_counter.load() < batch_size;
 
 			for (auto& thread : threads)
 				thread.join();
