@@ -209,7 +209,9 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 		uint32_t imm_index = 0;
 		uint32_t* compiled_program = (uint32_t*)(R + (REGISTERS_SIZE + IMM_BUF_SIZE) / sizeof(uint64_t));
 
-		uint64_t registerUsage = 0;
+		uint64_t registerLastChanged = 0;
+		uint64_t registerWasChanged = 0;
+		uint64_t registerUsageCount = 0;
 
 		for (uint32_t i = 0; i < RANDOMX_PROGRAM_SIZE; ++i)
 		{
@@ -240,7 +242,8 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 					imm_buf[imm_index++] = inst.y;
 				}
 
-				set_byte(registerUsage, dst, i);
+				set_byte(registerLastChanged, dst, i);
+				set_byte(registerWasChanged, dst, 1);
 				*(compiled_program++) = inst.x;
 				continue;
 			}
@@ -253,7 +256,8 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 				inst.x |= (imm_index << 8);
 				imm_buf[imm_index++] = inst.y;
 
-				set_byte(registerUsage, dst, i);
+				set_byte(registerLastChanged, dst, i);
+				set_byte(registerWasChanged, dst, 1);
 				*(compiled_program++) = inst.x;
 				continue;
 			}
@@ -268,7 +272,8 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 					imm_buf[imm_index++] = inst.y;
 				}
 
-				set_byte(registerUsage, dst, i);
+				set_byte(registerLastChanged, dst, i);
+				set_byte(registerWasChanged, dst, 1);
 				*(compiled_program++) = inst.x;
 				continue;
 			}
@@ -281,7 +286,8 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 				inst.x |= (imm_index << 8);
 				imm_buf[imm_index++] = inst.y;
 
-				set_byte(registerUsage, dst, i);
+				set_byte(registerLastChanged, dst, i);
+				set_byte(registerWasChanged, dst, 1);
 				*(compiled_program++) = inst.x;
 				continue;
 			}
@@ -296,7 +302,8 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 					imm_buf[imm_index++] = inst.y;
 				}
 
-				set_byte(registerUsage, dst, i);
+				set_byte(registerLastChanged, dst, i);
+				set_byte(registerWasChanged, dst, 1);
 				*(compiled_program++) = inst.x;
 				continue;
 			}
@@ -309,7 +316,8 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 				inst.x |= (imm_index << 8);
 				imm_buf[imm_index++] = inst.y;
 
-				set_byte(registerUsage, dst, i);
+				set_byte(registerLastChanged, dst, i);
+				set_byte(registerWasChanged, dst, 1);
 				*(compiled_program++) = inst.x;
 				continue;
 			}
@@ -319,7 +327,8 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 			{
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (3 << IGROUP_OPCODE_OFFSET);
 
-				set_byte(registerUsage, dst, i);
+				set_byte(registerLastChanged, dst, i);
+				set_byte(registerWasChanged, dst, 1);
 				*(compiled_program++) = inst.x;
 				continue;
 			}
@@ -332,7 +341,8 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 				inst.x |= (imm_index << 8);
 				imm_buf[imm_index++] = inst.y;
 
-				set_byte(registerUsage, dst, i);
+				set_byte(registerLastChanged, dst, i);
+				set_byte(registerWasChanged, dst, 1);
 				*(compiled_program++) = inst.x;
 				continue;
 			}
@@ -342,7 +352,8 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 			{
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (4 << IGROUP_OPCODE_OFFSET);
 
-				set_byte(registerUsage, dst, i);
+				set_byte(registerLastChanged, dst, i);
+				set_byte(registerWasChanged, dst, 1);
 				*(compiled_program++) = inst.x;
 				continue;
 			}
@@ -355,7 +366,8 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 				inst.x |= (imm_index << 8);
 				imm_buf[imm_index++] = inst.y;
 
-				set_byte(registerUsage, dst, i);
+				set_byte(registerLastChanged, dst, i);
+				set_byte(registerWasChanged, dst, 1);
 				*(compiled_program++) = inst.x;
 				continue;
 			}
@@ -371,7 +383,10 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 				imm_index += 2;
 
 				if (inst.y)
-					set_byte(registerUsage, dst, i);
+				{
+					set_byte(registerLastChanged, dst, i);
+					set_byte(registerWasChanged, dst, 1);
+				}
 				*(compiled_program++) = inst.x;
 				continue;
 			}
@@ -381,7 +396,8 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 			{
 				inst.x = (dst << DST_OFFSET) | (5 << IGROUP_OPCODE_OFFSET);
 
-				set_byte(registerUsage, dst, i);
+				set_byte(registerLastChanged, dst, i);
+				set_byte(registerWasChanged, dst, 1);
 				*(compiled_program++) = inst.x;
 				continue;
 			}
@@ -396,7 +412,8 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 					imm_buf[imm_index++] = inst.y;
 				}
 
-				set_byte(registerUsage, dst, i);
+				set_byte(registerLastChanged, dst, i);
+				set_byte(registerWasChanged, dst, 1);
 				*(compiled_program++) = inst.x;
 				continue;
 			}
@@ -409,7 +426,8 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 				inst.x |= (imm_index << 8);
 				imm_buf[imm_index++] = inst.y;
 
-				set_byte(registerUsage, dst, i);
+				set_byte(registerLastChanged, dst, i);
+				set_byte(registerWasChanged, dst, 1);
 				*(compiled_program++) = inst.x;
 				continue;
 			}
@@ -424,7 +442,8 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 					imm_buf[imm_index++] = inst.y;
 				}
 
-				set_byte(registerUsage, dst, i);
+				set_byte(registerLastChanged, dst, i);
+				set_byte(registerWasChanged, dst, 1);
 				*(compiled_program++) = inst.x;
 				continue;
 			}
@@ -436,13 +455,57 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 
 				if (src != dst)
 				{
-					set_byte(registerUsage, dst, i);
-					set_byte(registerUsage, src, i);
+					set_byte(registerLastChanged, dst, i);
+					set_byte(registerWasChanged, dst, 1);
+					set_byte(registerLastChanged, src, i);
+					set_byte(registerWasChanged, src, 1);
 				}
 				*(compiled_program++) = (src != dst) ? inst.x : INST_NOP;
 				continue;
 			}
 			opcode -= RANDOMX_FREQ_ISWAP_R;
+
+			if (opcode < RANDOMX_FREQ_CBRANCH)
+			{
+				int32_t lastChanged = INT_MAX;
+				uint32_t minCount = 0xFFFFFFFFU;
+				uint32_t creg = 0;
+				for (uint32_t j = 0; j < 8; ++j)
+				{
+					uint64_t change, count;
+					asm("bfe.u64 %0,%1,%2,8;" : "=l"(change) : "l"(registerLastChanged), "r"(j * 8));
+					asm("bfe.u64 %0,%1,%2,8;" : "=l"(count) : "l"(registerUsageCount), "r"(j * 8));
+
+					const int32_t k = (((registerWasChanged >> (j * 8)) & 1) == 0) ? -1 : static_cast<int32_t>(change);
+					if ((k < lastChanged) || ((change == lastChanged) && (count < minCount)))
+					{
+						lastChanged = k;
+						minCount = count;
+						creg = j;
+					}
+				}
+
+				registerUsageCount += (1ULL << (creg * 8));
+
+				inst.x = (creg << DST_OFFSET) | (src << SRC_OFFSET) | (10 << IGROUP_OPCODE_OFFSET);
+				inst.x |= (imm_index << 8);
+
+				const uint32_t cshift = (mod >> 4);
+
+				imm_buf[imm_index] = inst.y | (1U << cshift);
+				imm_buf[imm_index + 1] = cshift | (static_cast<uint32_t>(lastChanged) << 4);
+				imm_index += 2;
+
+				const uint32_t tmp = i | (i << 8);
+				registerLastChanged = tmp | (tmp << 16);
+				registerLastChanged |= registerLastChanged << 32;
+
+				registerWasChanged = 0x0101010101010101ULL;
+
+				*(compiled_program++) = inst.x;
+				continue;
+			}
+			opcode -= RANDOMX_FREQ_CBRANCH;
 
 			if (opcode < RANDOMX_FREQ_ISTORE)
 			{
@@ -454,40 +517,6 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 				continue;
 			}
 			opcode -= RANDOMX_FREQ_ISTORE;
-
-			if (opcode < RANDOMX_FREQ_CBRANCH)
-			{
-				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (10 << IGROUP_OPCODE_OFFSET);
-				inst.x |= (imm_index << 8);
-
-				uint32_t target = 0xFFFFFFFFU;
-				uint32_t creg = 0;
-				for (uint32_t j = 0; j < 8; ++j)
-				{
-					uint64_t k;
-					asm("bfe.u64 %0,%1,%2,8;" : "=l"(k) : "l"(registerUsage), "r"(j * 8));
-					if (k < target)
-					{
-						target = k;
-						creg = j;
-					}
-				}
-
-				const uint32_t cshift = (mod >> 5);
-				const uint32_t cond = (mod >> 2) % 8;
-
-				imm_buf[imm_index] = inst.y;
-				imm_buf[imm_index + 1] = cshift | (creg << 3) | (target << 6) | (cond << 14);
-				imm_index += 2;
-
-				const uint32_t tmp = i | (i << 8);
-				registerUsage = tmp | (tmp << 16);
-				registerUsage |= registerUsage << 32;
-
-				*(compiled_program++) = inst.x;
-				continue;
-			}
-			opcode -= RANDOMX_FREQ_CBRANCH;
 
 			*(compiled_program++) = inst.x;
 		}
@@ -588,7 +617,7 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 		if (sub == 0)
 		{
 			#pragma unroll(1)
-			for (uint32_t ip = 0; ip < RANDOMX_PROGRAM_SIZE; ++ip)
+			for (int32_t ip = 0; ip < RANDOMX_PROGRAM_SIZE; ++ip)
 			{
 				uint32_t inst = compiled_program[ip];
 
@@ -686,23 +715,9 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 
 					case 10:
 						{
-							const uint32_t cshift = imm.y & 7;
-							const uint32_t creg_index = (imm.y >> 3) & 7;
-							const uint32_t branch_target = (imm.y >> 6) & 255;
-							uint64_t* cond_reg_ptr = (uint64_t*)((uint8_t*)(R) + creg_index * 8);
-
-							uint64_t creg = *cond_reg_ptr;
-							creg += (1U << cshift);
-							*cond_reg_ptr = creg;
-
-							if ((creg & (((1U << RANDOMX_JUMP_BITS) - 1) << cshift)) == 0)
-							{
-								ip = branch_target - 1;
-								break;
-							}
-
-							// TODO: increment dst depending on condition
-							const uint32_t cond = (imm.y >> 14) & 7;
+							dst += static_cast<int32_t>(imm.x);
+							if ((dst & (randomx::ConditionMask << (imm.y & 15))) == 0)
+								ip = static_cast<int32_t>(imm.y) >> 4;
 						}
 						break;
 
