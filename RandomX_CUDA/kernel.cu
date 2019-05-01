@@ -261,7 +261,7 @@ bool test_mining(bool validate, int bfactor)
 	for (uint32_t nonce = 0, k = 0; nonce < 0xFFFFFFFFUL; nonce += batch_size, ++k)
 	{
 		auto validation_thread = [&nonce_counter, myDataset, &hashes_check, batch_size, nonce]() {
-			randomx_vm *myMachine = randomx_create_vm((randomx_flags)(RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_LARGE_PAGES), nullptr, myDataset);
+			randomx_vm *myMachine = randomx_create_vm((randomx_flags)(RANDOMX_FLAG_FULL_MEM /*| RANDOMX_FLAG_JIT*/ | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_LARGE_PAGES), nullptr, myDataset);
 
 			uint8_t buf[sizeof(blockTemplate)];
 			memcpy(buf, blockTemplate, sizeof(buf));

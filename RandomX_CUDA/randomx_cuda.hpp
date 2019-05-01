@@ -36,18 +36,26 @@ constexpr uint32_t CacheLineAlignMask = (DATASET_SIZE - 1) & ~(CacheLineSize - 1
 
 __device__ double getSmallPositiveFloatBits(uint64_t entropy)
 {
-	constexpr int mantissaSize = 52;
-	constexpr int exponentSize = 11;
-	constexpr uint64_t mantissaMask = (1ULL << mantissaSize) - 1;
-	constexpr uint64_t exponentMask = (1ULL << exponentSize) - 1;
-	constexpr int exponentBias = 1023;
-
-	uint64_t exponent = entropy >> 59; //0..31
-	uint64_t mantissa = entropy & mantissaMask;
-	exponent += exponentBias;
-	exponent &= exponentMask;
-	exponent <<= mantissaSize;
+	auto exponent = entropy >> 59; //0..31
+	auto mantissa = entropy & randomx::mantissaMask;
+	exponent += randomx::exponentBias;
+	exponent &= randomx::exponentMask;
+	exponent <<= randomx::mantissaSize;
 	return __longlong_as_double(exponent | mantissa);
+}
+
+__device__ uint64_t getStaticExponent(uint64_t entropy)
+{
+	auto exponent = randomx::constExponentBits;
+	exponent |= (entropy >> (64 - randomx::staticExponentBits)) << randomx::dynamicExponentBits;
+	exponent <<= randomx::mantissaSize;
+	return exponent;
+}
+
+__device__ uint64_t getFloatMask(uint64_t entropy)
+{
+	constexpr uint64_t mask22bit = (1ULL << 22) - 1;
+	return (entropy & mask22bit) | getStaticExponent(entropy);
 }
 
 template<typename T>
@@ -187,8 +195,8 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 		uint32_t datasetOffset = (entropy[13] & randomx::DatasetExtraItems) * randomx::CacheLineSize;
 
 		ulonglong2 eMask = *(ulonglong2*)(entropy + 14);
-		eMask.x = (eMask.x & ((1ULL << 22) - 1)) | ((1023ULL - 240) << 52);
-		eMask.y = (eMask.y & ((1ULL << 22) - 1)) | ((1023ULL - 240) << 52);
+		eMask.x = getFloatMask(eMask.x);
+		eMask.y = getFloatMask(eMask.y);
 
 		((uint32_t*)(R + 16))[0] = ma;
 		((uint32_t*)(R + 16))[1] = mx;
@@ -216,7 +224,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 
 			if (opcode < RANDOMX_FREQ_IADD_RS)
 			{
-				const uint32_t shift = mod % 4;
+				const uint32_t shift = (mod >> 2) % 4;
 
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (shift << IGROUP_SHIFT_OFFSET);
 
@@ -438,7 +446,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 
 			if (opcode < RANDOMX_FREQ_ISTORE)
 			{
-				const uint32_t location = (((mod >> 2) & 7) == 0) ? LOC_L3 : ((mod % 4) ? LOC_L1 : LOC_L2);
+				const uint32_t location = ((mod >> 4) >= randomx::StoreL3Condition) ? LOC_L3 : ((mod % 4) ? LOC_L1 : LOC_L2);
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (9 << IGROUP_OPCODE_OFFSET);
 				inst.x |= (imm_index << 8);
 				imm_buf[imm_index++] = inst.y;
@@ -447,7 +455,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 			}
 			opcode -= RANDOMX_FREQ_ISTORE;
 
-			if (opcode < RANDOMX_FREQ_COND_R)
+			if (opcode < RANDOMX_FREQ_CBRANCH)
 			{
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (10 << IGROUP_OPCODE_OFFSET);
 				inst.x |= (imm_index << 8);
@@ -479,7 +487,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 				*(compiled_program++) = inst.x;
 				continue;
 			}
-			opcode -= RANDOMX_FREQ_COND_R;
+			opcode -= RANDOMX_FREQ_CBRANCH;
 
 			*(compiled_program++) = inst.x;
 		}
@@ -544,7 +552,7 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 	double* f = F + sub;
 	double* e = E + sub;
 
-	const uint64_t andMask = f_group ? uint64_t(-1) : ((1ULL << 52) - 1);
+	const uint64_t andMask = f_group ? uint64_t(-1) : randomx::dynamicMantissaMask;
 	const uint64_t orMask1 = f_group ? 0 : eMask.x;
 	const uint64_t orMask2 = f_group ? 0 : eMask.y;
 
@@ -687,7 +695,7 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 							creg += (1U << cshift);
 							*cond_reg_ptr = creg;
 
-							if ((creg & (((1U << RANDOMX_CONDITION_BITS) - 1) << cshift)) == 0)
+							if ((creg & (((1U << RANDOMX_JUMP_BITS) - 1) << cshift)) == 0)
 							{
 								ip = branch_target - 1;
 								break;
