@@ -110,31 +110,31 @@ __device__ void test_memory_access(uint64_t* r, uint8_t* scratchpad, uint32_t ba
 //
 // Instruction encoding:
 //
-// Bits 0-1: instruction group (integer, FP, store, conditional)
-// Bits 2-4: dst (0-7)
-// Bits 5-7: src (0-7)
-// Bits 8-15: imm32/64 offset (in DWORDs, 0-191)
-// Bits 16-20: src location (register, L1, L2, L3)
+// Bits 0-2: dst (0-7)
+// Bits 3-5: src (0-7)
+// Bits 6-13: imm32/64 offset (in DWORDs, 0-191)
+// Bits 14-18: src location (register, L1, L2, L3)
 //
 // Integer group:
-// Bits 21-22: src shift (0-3)
-// Bit 23: src=imm32
-// Bit 24: src=imm64
-// Bit 25: src = -src
-// Bits 26-29: instruction (add_rs, add, mul, umul_hi, imul_hi, neg, xor, ror, swap, store)
+// Bits 19-20: src shift (0-3)
+// Bit 21: src=imm32
+// Bit 22: src=imm64
+// Bit 23: src = -src
+// Bits 24-27: instruction (add_rs, add, mul, umul_hi, imul_hi, neg, xor, ror, swap, cbranch, store)
 //
 
-#define DST_OFFSET						2
-#define SRC_OFFSET						5
-#define IMM_OFFSET						8
-#define LOC_OFFSET						16
-#define IGROUP_SHIFT_OFFSET				21
-#define IGROUP_SRC_IS_IMM32_OFFSET		23
-#define IGROUP_SRC_IS_IMM64_OFFSET		24
-#define IGROUP_NEGATIVE_SRC				25
-#define IGROUP_OPCODE_OFFSET			26
+#define DST_OFFSET						0
+#define SRC_OFFSET						3
+#define IMM_OFFSET						6
+#define LOC_OFFSET						14
+#define IGROUP_SHIFT_OFFSET				19
+#define IGROUP_SRC_IS_IMM32_OFFSET		21
+#define IGROUP_SRC_IS_IMM64_OFFSET		22
+#define IGROUP_NEGATIVE_SRC				23
+#define IGROUP_OPCODE_OFFSET			24
 
-#define INST_NOP						3
+// ISWAP r0, r0
+#define INST_NOP						(8 << IGROUP_OPCODE_OFFSET)
 
 #define LOC_L1 (32 - 14)
 #define LOC_L2 (32 - 18)
@@ -238,7 +238,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 				else
 				{
 					// Encode ADD with src and imm32 (opcode 0)
-					inst.x |= imm_index << 8;
+					inst.x |= imm_index << IMM_OFFSET;
 					imm_buf[imm_index++] = inst.y;
 				}
 
@@ -253,7 +253,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 			{
 				const uint32_t location = (src == dst) ? LOC_L3 : ((mod % 4) ? LOC_L1 : LOC_L2);
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (1 << IGROUP_OPCODE_OFFSET);
-				inst.x |= (imm_index << 8);
+				inst.x |= imm_index << IMM_OFFSET;
 				imm_buf[imm_index++] = inst.y;
 
 				set_byte(registerLastChanged, dst, i);
@@ -268,7 +268,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (1 << IGROUP_OPCODE_OFFSET) | (1 << IGROUP_NEGATIVE_SRC);
 				if (src == dst)
 				{
-					inst.x |= (imm_index << 8) | (1 << IGROUP_SRC_IS_IMM32_OFFSET);
+					inst.x |= (imm_index << IMM_OFFSET) | (1 << IGROUP_SRC_IS_IMM32_OFFSET);
 					imm_buf[imm_index++] = inst.y;
 				}
 
@@ -283,7 +283,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 			{
 				const uint32_t location = (src == dst) ? LOC_L3 : ((mod % 4) ? LOC_L1 : LOC_L2);
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (1 << IGROUP_OPCODE_OFFSET) | (1 << IGROUP_NEGATIVE_SRC);
-				inst.x |= (imm_index << 8);
+				inst.x |= imm_index << IMM_OFFSET;
 				imm_buf[imm_index++] = inst.y;
 
 				set_byte(registerLastChanged, dst, i);
@@ -298,7 +298,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (2 << IGROUP_OPCODE_OFFSET);
 				if (src == dst)
 				{
-					inst.x |= (imm_index << 8) | (1 << IGROUP_SRC_IS_IMM32_OFFSET);
+					inst.x |= (imm_index << IMM_OFFSET) | (1 << IGROUP_SRC_IS_IMM32_OFFSET);
 					imm_buf[imm_index++] = inst.y;
 				}
 
@@ -313,7 +313,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 			{
 				const uint32_t location = (src == dst) ? LOC_L3 : ((mod % 4) ? LOC_L1 : LOC_L2);
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (2 << IGROUP_OPCODE_OFFSET);
-				inst.x |= (imm_index << 8);
+				inst.x |= imm_index << IMM_OFFSET;
 				imm_buf[imm_index++] = inst.y;
 
 				set_byte(registerLastChanged, dst, i);
@@ -338,7 +338,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 			{
 				const uint32_t location = (src == dst) ? LOC_L3 : ((mod % 4) ? LOC_L1 : LOC_L2);
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (3 << IGROUP_OPCODE_OFFSET);
-				inst.x |= (imm_index << 8);
+				inst.x |= imm_index << IMM_OFFSET;
 				imm_buf[imm_index++] = inst.y;
 
 				set_byte(registerLastChanged, dst, i);
@@ -363,7 +363,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 			{
 				const uint32_t location = (src == dst) ? LOC_L3 : ((mod % 4) ? LOC_L1 : LOC_L2);
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (4 << IGROUP_OPCODE_OFFSET);
-				inst.x |= (imm_index << 8);
+				inst.x |= imm_index << IMM_OFFSET;
 				imm_buf[imm_index++] = inst.y;
 
 				set_byte(registerLastChanged, dst, i);
@@ -375,9 +375,16 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 
 			if (opcode < RANDOMX_FREQ_IMUL_RCP)
 			{
-				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (2 << IGROUP_OPCODE_OFFSET);
-				inst.x |= (imm_index << 8) | (1 << IGROUP_SRC_IS_IMM64_OFFSET);
 				const uint64_t r = imul_rcp_value(inst.y);
+				if (r == 1)
+				{
+					*(compiled_program++) = INST_NOP;
+					continue;
+				}
+
+				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (2 << IGROUP_OPCODE_OFFSET);
+				inst.x |= (imm_index << IMM_OFFSET) | (1 << IGROUP_SRC_IS_IMM64_OFFSET);
+
 				imm_buf[imm_index] = ((const uint32_t*) &r)[0];
 				imm_buf[imm_index + 1] = ((const uint32_t*) &r)[1];
 				imm_index += 2;
@@ -408,7 +415,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (6 << IGROUP_OPCODE_OFFSET);
 				if (src == dst)
 				{
-					inst.x |= (imm_index << 8) | (1 << IGROUP_SRC_IS_IMM32_OFFSET);
+					inst.x |= (imm_index << IMM_OFFSET) | (1 << IGROUP_SRC_IS_IMM32_OFFSET);
 					imm_buf[imm_index++] = inst.y;
 				}
 
@@ -423,7 +430,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 			{
 				const uint32_t location = (src == dst) ? LOC_L3 : ((mod % 4) ? LOC_L1 : LOC_L2);
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (6 << IGROUP_OPCODE_OFFSET);
-				inst.x |= (imm_index << 8);
+				inst.x |= imm_index << IMM_OFFSET;
 				imm_buf[imm_index++] = inst.y;
 
 				set_byte(registerLastChanged, dst, i);
@@ -438,7 +445,7 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (7 << IGROUP_OPCODE_OFFSET);
 				if (src == dst)
 				{
-					inst.x |= (imm_index << 8) | (1 << IGROUP_SRC_IS_IMM32_OFFSET);
+					inst.x |= (imm_index << IMM_OFFSET) | (1 << IGROUP_SRC_IS_IMM32_OFFSET);
 					imm_buf[imm_index++] = inst.y;
 				}
 
@@ -487,8 +494,8 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 
 				registerUsageCount += (1ULL << (creg * 8));
 
-				inst.x = (creg << DST_OFFSET) | (src << SRC_OFFSET) | (10 << IGROUP_OPCODE_OFFSET);
-				inst.x |= (imm_index << 8);
+				inst.x = (creg << DST_OFFSET) | (src << SRC_OFFSET) | (9 << IGROUP_OPCODE_OFFSET);
+				inst.x |= (imm_index << IMM_OFFSET);
 
 				const uint32_t cshift = (mod >> 4);
 
@@ -510,8 +517,8 @@ __global__ void __launch_bounds__(32) init_vm(const void* entropy_data, void* vm
 			if (opcode < RANDOMX_FREQ_ISTORE)
 			{
 				const uint32_t location = ((mod >> 4) >= randomx::StoreL3Condition) ? LOC_L3 : ((mod % 4) ? LOC_L1 : LOC_L2);
-				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (9 << IGROUP_OPCODE_OFFSET);
-				inst.x |= (imm_index << 8);
+				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (10 << IGROUP_OPCODE_OFFSET);
+				inst.x |= imm_index << IMM_OFFSET;
 				imm_buf[imm_index++] = inst.y;
 				*(compiled_program++) = inst.x;
 				continue;
@@ -623,7 +630,9 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 
 				asm("// INSTRUCTION DECODING BEGIN");
 
-				const uint32_t group = inst & 3;
+				if (inst == INST_NOP)
+					continue;
+
 				uint64_t* dst_ptr = (uint64_t*)((uint8_t*)(R) + ((inst >> DST_OFFSET) & 7) * 8);
 				uint64_t* src_ptr = (uint64_t*)((uint8_t*)(R) + ((inst >> SRC_OFFSET) & 7) * 8);
 				uint32_t* imm_ptr = imm_buf + ((inst >> IMM_OFFSET) & 255);
@@ -645,7 +654,7 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 
 					const uint32_t mask = 0xFFFFFFFFU >> location;
 
-					const bool is_read = (opcode != 9);
+					const bool is_read = (opcode != 10);
 					uint32_t addr = is_read ? ((location == LOC_L3) ? 0 : static_cast<uint32_t>(src)) : static_cast<uint32_t>(dst);
 					addr += static_cast<int32_t>(imm.x);
 					addr &= mask;
@@ -661,74 +670,60 @@ __global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchp
 					asm("// SCRATCHPAD ACCESS END");
 				}
 
-				// Integer instructions
-				if (group == 0)
 				{
-					asm("// INTEGER GROUP BEGIN");
+					asm("// EXECUTION BEGIN");
 
 					if (inst & (1 << IGROUP_SRC_IS_IMM32_OFFSET)) src = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(imm.x)));
-					if (inst & (1 << IGROUP_NEGATIVE_SRC)) src = -static_cast<uint64_t>(src);
 
-					switch (opcode)
+					// Check instruction opcodes (most frequent instructions come first)
+					if (opcode < 2)
 					{
-					case 0:
-						dst += static_cast<int32_t>(imm.x);
-					case 1:
-						{
-							const uint32_t shift = (inst >> IGROUP_SHIFT_OFFSET) & 3;
-							dst += src << shift;
-						}
-						break;
-
-					case 2:
-						if (inst & (1 << IGROUP_SRC_IS_IMM64_OFFSET)) src = *((uint64_t*) &imm);
+						if (inst & (1 << IGROUP_NEGATIVE_SRC)) src = static_cast<uint64_t>(-static_cast<int64_t>(src));
+						if (opcode == 0) dst += static_cast<int32_t>(imm.x);
+						const uint32_t shift = (inst >> IGROUP_SHIFT_OFFSET) & 3;
+						dst += src << shift;
+					}
+					else if (opcode == 2)
+					{
+						if (inst & (1 << IGROUP_SRC_IS_IMM64_OFFSET)) src = *((uint64_t*)&imm);
 						dst *= src;
-						break;
-
-					case 3:
-						dst = __umul64hi(dst, src);
-						break;
-
-					case 4:
-						dst = static_cast<uint64_t>(__mul64hi(static_cast<int64_t>(dst), static_cast<int64_t>(src)));
-						break;
-
-					case 5:
-						dst = static_cast<uint64_t>(-static_cast<int64_t>(dst));
-						break;
-
-					case 6:
+					}
+					else if (opcode == 6)
+					{
 						dst ^= src;
-						break;
-
-					case 7:
-						{
-							const uint32_t shift = src & 63;
-							dst = (dst >> shift) | (dst << (64 - shift));
-						}
-						break;
-
-					case 8:
+					}
+					else if (opcode == 9)
+					{
+						dst += static_cast<int32_t>(imm.x);
+						if ((static_cast<uint32_t>(dst) & (randomx::ConditionMask << (imm.y & 15))) == 0)
+							ip = static_cast<int32_t>(imm.y) >> 4;
+					}
+					else if (opcode == 7)
+					{
+						const uint32_t shift = src & 63;
+						dst = (dst >> shift) | (dst << (64 - shift));
+					}
+					else if (opcode == 3)
+					{
+						dst = __umul64hi(dst, src);
+					}
+					else if (opcode == 4)
+					{
+						dst = static_cast<uint64_t>(__mul64hi(static_cast<int64_t>(dst), static_cast<int64_t>(src)));
+					}
+					else if (opcode == 8)
+					{
 						*src_ptr = dst;
 						dst = src;
-						break;
-
-					case 10:
-						{
-							dst += static_cast<int32_t>(imm.x);
-							if ((dst & (randomx::ConditionMask << (imm.y & 15))) == 0)
-								ip = static_cast<int32_t>(imm.y) >> 4;
-						}
-						break;
-
-					default:
-						__assume(false);
-						break;
+					}
+					else if (opcode == 5)
+					{
+						dst = static_cast<uint64_t>(-static_cast<int64_t>(dst));
 					}
 
 					*dst_ptr = dst;
 
-					asm("// INTEGER GROUP END");
+					asm("// EXECUTION END");
 				}
 
 				//__syncwarp((1U << 0) | (1U << 8));
