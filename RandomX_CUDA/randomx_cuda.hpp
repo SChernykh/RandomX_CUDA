@@ -105,7 +105,7 @@ __device__ void test_memory_access(uint64_t* r, uint8_t* scratchpad, uint32_t ba
 // VM state:
 //
 // Bytes 0-255: registers
-// Bytes 256-1023: imm32 values (up to 192 values can be stored). IMUL_RCP uses 2 consecutive imm32 values.
+// Bytes 256-1023: imm32 values (up to 192 values can be stored). IMUL_RCP and CBRANCH use 2 consecutive imm32 values.
 // Bytes 1024-2047: up to 256 instructions
 //
 // Instruction encoding:
