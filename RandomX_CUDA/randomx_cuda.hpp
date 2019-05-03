@@ -185,24 +185,7 @@ __device__ void set_buffer(T (&dst_buf)[N], const U value)
 	}
 }
 
-// 8 integer registers, 4 group F registers, 4 group E registers, fprc register, branch barrier, 2 areas for scratchpad (0-256 KB, 256-2048 KB)
-enum { DEPENDENCY_DATA_COUNT = 8 + 4 + 4 + 1 + 1 + 2 };
-
-__device__ uint32_t get_mem_last_changed(uint32_t src, uint32_t dst, const uint2& inst, const uint8_t* reg_last_changed)
-{
-	if ((src == dst) && ((inst.y & ScratchpadL3Mask64) >= 256 * 1024))
-	{
-		// read from high part of scratchpad
-		return reg_last_changed[DEPENDENCY_DATA_COUNT - 1];
-	}
-	else
-	{
-		// read from low part of scratchpad
-		return reg_last_changed[DEPENDENCY_DATA_COUNT - 2];
-	}
-}
-
-__device__ uint32_t get_condition_register(uint8_t* registerLastChanged, uint64_t registerWasChanged, uint64_t& registerUsageCount, int32_t& lastChanged)
+__device__ uint32_t get_condition_register(uint64_t registerLastChanged, uint64_t registerWasChanged, uint64_t& registerUsageCount, int32_t& lastChanged)
 {
 	lastChanged = INT_MAX;
 	uint32_t minCount = 0xFFFFFFFFU;
@@ -210,12 +193,11 @@ __device__ uint32_t get_condition_register(uint8_t* registerLastChanged, uint64_
 
 	for (uint32_t j = 0; j < 8; ++j)
 	{
-		const int32_t change = registerLastChanged[j];
-
-		uint64_t count;
+		uint64_t change, count;
+		asm("bfe.u64 %0,%1,%2,8;" : "=l"(change) : "l"(registerLastChanged), "r"(j * 8));
 		asm("bfe.u64 %0,%1,%2,8;" : "=l"(count) : "l"(registerUsageCount), "r"(j * 8));
 
-		const int32_t k = (((registerWasChanged >> (j * 8)) & 1) == 0) ? -1 : change;
+		const int32_t k = (((registerWasChanged >> (j * 8)) & 1) == 0) ? -1 : static_cast<int32_t>(change);
 		if ((k < lastChanged) || ((change == lastChanged) && (count < minCount)))
 		{
 			lastChanged = k;
@@ -228,21 +210,18 @@ __device__ uint32_t get_condition_register(uint8_t* registerLastChanged, uint64_
 	return creg;
 }
 
-__global__ void __launch_bounds__(32) init_vm(void* entropy_data, void* vm_states)
+__global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_states)
 {
 	__shared__ uint32_t execution_plan_buf[RANDOMX_PROGRAM_SIZE * WORKERS_PER_HASH * (32 / 8) / sizeof(uint32_t)];
-	__shared__ uint8_t reg_last_changed_buf[DEPENDENCY_DATA_COUNT * (32 / 8)];
 
-	set_buffer(execution_plan_buf, INST_NOP);
-	set_buffer(reg_last_changed_buf, 0);
+	set_buffer(execution_plan_buf, 0);
 	__syncwarp();
 
 	const uint32_t global_index = blockIdx.x * blockDim.x + threadIdx.x;
 	const uint32_t idx = global_index / 8;
 	const uint32_t sub = global_index % 8;
 
-	uint8_t* execution_plan = (uint8_t*)(execution_plan_buf + (threadIdx.x / 8) * RANDOMX_PROGRAM_SIZE * WORKERS_PER_HASH);
-	uint8_t* reg_last_changed = reg_last_changed_buf + (threadIdx.x / 8) * DEPENDENCY_DATA_COUNT;
+	uint8_t* execution_plan = (uint8_t*)(execution_plan_buf + (threadIdx.x / 8) * RANDOMX_PROGRAM_SIZE * WORKERS_PER_HASH / sizeof(uint32_t));
 
 	uint64_t* R = ((uint64_t*) vm_states) + idx * VM_STATE_SIZE / sizeof(uint64_t);
 	R[sub] = 0;
@@ -256,6 +235,7 @@ __global__ void __launch_bounds__(32) init_vm(void* entropy_data, void* vm_state
 	{
 		uint2* src_program = (uint2*)(entropy + 128 / sizeof(uint64_t));
 
+		uint64_t registerLastChanged = 0;
 		uint64_t registerWasChanged = 0;
 		uint64_t registerUsageCount = 0;
 
@@ -268,138 +248,41 @@ __global__ void __launch_bounds__(32) init_vm(void* entropy_data, void* vm_state
 			uint32_t opcode = inst.x & 0xff;
 			const uint32_t dst = (inst.x >> 8) & 7;
 			const uint32_t src = (inst.x >> 16) & 7;
-			const uint32_t mod = (inst.x >> 24);
 
-			if (opcode < RANDOMX_FREQ_IADD_RS)
+			if (opcode < RANDOMX_FREQ_IADD_RS + RANDOMX_FREQ_IADD_M + RANDOMX_FREQ_ISUB_R + RANDOMX_FREQ_ISUB_M + RANDOMX_FREQ_IMUL_R + RANDOMX_FREQ_IMUL_M + RANDOMX_FREQ_IMULH_R + RANDOMX_FREQ_IMULH_M + RANDOMX_FREQ_ISMULH_R + RANDOMX_FREQ_ISMULH_M)
 			{
-				reg_last_changed[dst] = i;
+				set_byte(registerLastChanged, dst, i);
 				set_byte(registerWasChanged, dst, 1);
 				continue;
 			}
-			opcode -= RANDOMX_FREQ_IADD_RS;
-
-			if (opcode < RANDOMX_FREQ_IADD_M)
-			{
-				reg_last_changed[dst] = i;
-				set_byte(registerWasChanged, dst, 1);
-				continue;
-			}
-			opcode -= RANDOMX_FREQ_IADD_M;
-
-			if (opcode < RANDOMX_FREQ_ISUB_R)
-			{
-				reg_last_changed[dst] = i;
-				set_byte(registerWasChanged, dst, 1);
-				continue;
-			}
-			opcode -= RANDOMX_FREQ_ISUB_R;
-
-			if (opcode < RANDOMX_FREQ_ISUB_M)
-			{
-				reg_last_changed[dst] = i;
-				set_byte(registerWasChanged, dst, 1);
-				continue;
-			}
-			opcode -= RANDOMX_FREQ_ISUB_M;
-
-			if (opcode < RANDOMX_FREQ_IMUL_R)
-			{
-				reg_last_changed[dst] = i;
-				set_byte(registerWasChanged, dst, 1);
-				continue;
-			}
-			opcode -= RANDOMX_FREQ_IMUL_R;
-
-			if (opcode < RANDOMX_FREQ_IMUL_M)
-			{
-				reg_last_changed[dst] = i;
-				set_byte(registerWasChanged, dst, 1);
-				continue;
-			}
-			opcode -= RANDOMX_FREQ_IMUL_M;
-
-			if (opcode < RANDOMX_FREQ_IMULH_R)
-			{
-				reg_last_changed[dst] = i;
-				set_byte(registerWasChanged, dst, 1);
-				continue;
-			}
-			opcode -= RANDOMX_FREQ_IMULH_R;
-
-			if (opcode < RANDOMX_FREQ_IMULH_M)
-			{
-				reg_last_changed[dst] = i;
-				set_byte(registerWasChanged, dst, 1);
-				continue;
-			}
-			opcode -= RANDOMX_FREQ_IMULH_M;
-
-			if (opcode < RANDOMX_FREQ_ISMULH_R)
-			{
-				reg_last_changed[dst] = i;
-				set_byte(registerWasChanged, dst, 1);
-				continue;
-			}
-			opcode -= RANDOMX_FREQ_ISMULH_R;
-
-			if (opcode < RANDOMX_FREQ_ISMULH_M)
-			{
-				reg_last_changed[dst] = i;
-				set_byte(registerWasChanged, dst, 1);
-				continue;
-			}
-			opcode -= RANDOMX_FREQ_ISMULH_M;
+			opcode -= RANDOMX_FREQ_IADD_RS + RANDOMX_FREQ_IADD_M + RANDOMX_FREQ_ISUB_R + RANDOMX_FREQ_ISUB_M + RANDOMX_FREQ_IMUL_R + RANDOMX_FREQ_IMUL_M + RANDOMX_FREQ_IMULH_R + RANDOMX_FREQ_IMULH_M + RANDOMX_FREQ_ISMULH_R + RANDOMX_FREQ_ISMULH_M;
 
 			if (opcode < RANDOMX_FREQ_IMUL_RCP)
 			{
 				if (inst.y)
 				{
-					reg_last_changed[dst] = i;
+					set_byte(registerLastChanged, dst, i);
 					set_byte(registerWasChanged, dst, 1);
 				}
 				continue;
 			}
 			opcode -= RANDOMX_FREQ_IMUL_RCP;
 
-			if (opcode < RANDOMX_FREQ_INEG_R)
+			if (opcode < RANDOMX_FREQ_INEG_R + RANDOMX_FREQ_IXOR_R + RANDOMX_FREQ_IXOR_M + RANDOMX_FREQ_IROR_R)
 			{
-				reg_last_changed[dst] = i;
+				set_byte(registerLastChanged, dst, i);
 				set_byte(registerWasChanged, dst, 1);
 				continue;
 			}
-			opcode -= RANDOMX_FREQ_INEG_R;
-
-			if (opcode < RANDOMX_FREQ_IXOR_R)
-			{
-				reg_last_changed[dst] = i;
-				set_byte(registerWasChanged, dst, 1);
-				continue;
-			}
-			opcode -= RANDOMX_FREQ_IXOR_R;
-
-			if (opcode < RANDOMX_FREQ_IXOR_M)
-			{
-				reg_last_changed[dst] = i;
-				set_byte(registerWasChanged, dst, 1);
-				continue;
-			}
-			opcode -= RANDOMX_FREQ_IXOR_M;
-
-			if (opcode < RANDOMX_FREQ_IROR_R)
-			{
-				reg_last_changed[dst] = i;
-				set_byte(registerWasChanged, dst, 1);
-				continue;
-			}
-			opcode -= RANDOMX_FREQ_IROR_R;
+			opcode -= RANDOMX_FREQ_INEG_R + RANDOMX_FREQ_IXOR_R + RANDOMX_FREQ_IXOR_M + RANDOMX_FREQ_IROR_R;
 
 			if (opcode < RANDOMX_FREQ_ISWAP_R)
 			{
 				if (src != dst)
 				{
-					reg_last_changed[dst] = i;
+					set_byte(registerLastChanged, dst, i);
 					set_byte(registerWasChanged, dst, 1);
-					reg_last_changed[src] = i;
+					set_byte(registerLastChanged, src, i);
 					set_byte(registerWasChanged, src, 1);
 				}
 				continue;
@@ -409,7 +292,7 @@ __global__ void __launch_bounds__(32) init_vm(void* entropy_data, void* vm_state
 			if (opcode < RANDOMX_FREQ_CBRANCH)
 			{
 				int32_t lastChanged;
-				uint32_t creg = get_condition_register(reg_last_changed, registerWasChanged, registerUsageCount, lastChanged);
+				uint32_t creg = get_condition_register(registerLastChanged, registerWasChanged, registerUsageCount, lastChanged);
 
 				// Store condition register and branch target in CBRANCH instruction
 				*(uint32_t*)(src_program + i) = (src_inst.x & 0xFF0000FFU) | ((creg | ((lastChanged == -1) ? 0x80 : 0)) << 8) | ((static_cast<uint32_t>(lastChanged) & 0xFF) << 16);
@@ -417,22 +300,12 @@ __global__ void __launch_bounds__(32) init_vm(void* entropy_data, void* vm_state
 				// Mark branch target instruction (src |= 0x40)
 				*(uint32_t*)(src_program + lastChanged + 1) |= 0x40 << 8;
 
-				for (int j = 0; j < 8; ++j)
-					reg_last_changed[j] = i;
+				uint32_t tmp = i | (i << 8);
+				registerLastChanged = tmp | (tmp << 16);
+				registerLastChanged = registerLastChanged | (registerLastChanged << 32);
 
 				registerWasChanged = 0x0101010101010101ULL;
-				continue;
 			}
-			opcode -= RANDOMX_FREQ_CBRANCH;
-
-			if (opcode < RANDOMX_FREQ_ISTORE)
-			{
-				reg_last_changed[DEPENDENCY_DATA_COUNT - 2] = i;
-				if ((mod >> 4) >= randomx::StoreL3Condition)
-					reg_last_changed[DEPENDENCY_DATA_COUNT - 1] = i;
-				continue;
-			}
-			opcode -= RANDOMX_FREQ_ISTORE;
 		}
 
 		uint32_t ma = static_cast<uint32_t>(entropy[8]) & CacheLineAlignMask;
@@ -732,7 +605,7 @@ __device__ void load_buffer(T (&dst_buf)[N], const void* src_buf)
 	}
 }
 
-__global__ void __launch_bounds__(16) execute_vm(void* vm_states, void* scratchpads, const void* dataset_ptr, uint32_t batch_size, uint32_t num_iterations, bool first, bool last)
+__global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scratchpads, const void* dataset_ptr, uint32_t batch_size, uint32_t num_iterations, bool first, bool last)
 {
 	// 2 hashes per warp, 4 KB shared memory for VM states
 	__shared__ uint64_t vm_states_local[(VM_STATE_SIZE * 2) / sizeof(uint64_t)];
