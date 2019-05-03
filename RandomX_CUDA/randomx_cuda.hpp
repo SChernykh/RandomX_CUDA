@@ -171,6 +171,13 @@ __device__ void set_byte(uint64_t& a, uint32_t position, uint64_t value)
 	asm("bfi.b64 %0,%1,%2,%3,8;" : "=l"(a) : "l"(value), "l"(a), "r"(position << 3));
 }
 
+__device__ uint32_t get_byte(uint64_t a, uint32_t position)
+{
+	uint64_t result;
+	asm("bfe.u64 %0,%1,%2,8;" : "=l"(result) : "l"(a), "r"(position * 8));
+	return static_cast<uint32_t>(result);
+}
+
 template<typename T, typename U, size_t N>
 __device__ void set_buffer(T (&dst_buf)[N], const U value)
 {
@@ -193,11 +200,9 @@ __device__ uint32_t get_condition_register(uint64_t registerLastChanged, uint64_
 
 	for (uint32_t j = 0; j < 8; ++j)
 	{
-		uint64_t change, count;
-		asm("bfe.u64 %0,%1,%2,8;" : "=l"(change) : "l"(registerLastChanged), "r"(j * 8));
-		asm("bfe.u64 %0,%1,%2,8;" : "=l"(count) : "l"(registerUsageCount), "r"(j * 8));
-
-		const int32_t k = (((registerWasChanged >> (j * 8)) & 1) == 0) ? -1 : static_cast<int32_t>(change);
+		uint32_t change = get_byte(registerLastChanged, j);
+		int32_t count = get_byte(registerUsageCount, j);
+		const int32_t k = (get_byte(registerWasChanged, j) == 0) ? -1 : static_cast<int32_t>(change);
 		if ((k < lastChanged) || ((change == lastChanged) && (count < minCount)))
 		{
 			lastChanged = k;
@@ -208,6 +213,13 @@ __device__ uint32_t get_condition_register(uint64_t registerLastChanged, uint64_
 
 	registerUsageCount += (1ULL << (creg * 8));
 	return creg;
+}
+
+template<typename T, typename U>
+__device__ void update_max(T& value, const U next_value)
+{
+	if (value < next_value)
+		value = static_cast<T>(next_value);
 }
 
 __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_states)
@@ -242,6 +254,9 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 		// Initialize CBRANCH instructions
 		for (uint32_t i = 0; i < RANDOMX_PROGRAM_SIZE; ++i)
 		{
+			// Clear branch target flag
+			*(uint32_t*)(src_program + i) &= ~(0x40U << 8);
+
 			const uint2 src_inst = src_program[i];
 			uint2 inst = src_inst;
 
@@ -307,6 +322,295 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				registerWasChanged = 0x0101010101010101ULL;
 			}
 		}
+
+		uint64_t registerLatency = 0;
+		uint32_t ScratchpadHighLatency = 0;
+		uint32_t ScratchpadLatency = 0;
+
+		int32_t first_available_slot = 0;
+		int32_t last_used_slot = -1;
+		int32_t last_memory_op_slot = -1;
+
+		uint32_t num_slots_used = 0;
+
+		// Schedule instructions
+		for (uint32_t i = 0; i < RANDOMX_PROGRAM_SIZE; ++i)
+		{
+			const uint2 inst = src_program[i];
+
+			uint32_t opcode = inst.x & 0xff;
+			const uint32_t dst = (inst.x >> 8) & 7;
+			const uint32_t src = (inst.x >> 16) & 7;
+			const uint32_t mod = (inst.x >> 24);
+
+			const bool is_branch_target = (inst.x & (0x40 << 8)) != 0;
+			if (is_branch_target)
+			{
+				// If an instruction is a branch target, we can't move it before any previous instructions
+				first_available_slot = last_used_slot + 1;
+			}
+
+			const uint32_t dst_latency = get_byte(registerLatency, dst);
+			const uint32_t src_latency = get_byte(registerLatency, src);
+			const uint32_t reg_read_latency = (dst_latency > src_latency) ? dst_latency : src_latency;
+			const uint32_t mem_read_latency = ((dst == src) && ((inst.y & ScratchpadL3Mask64) >= RANDOMX_SCRATCHPAD_L2)) ? ScratchpadHighLatency : ScratchpadLatency;
+
+			uint32_t full_read_latency = mem_read_latency;
+			update_max(full_read_latency, reg_read_latency);
+
+			uint32_t latency = 0;
+			bool is_memory_op = false;
+			bool is_memory_store = false;
+			bool is_nop = false;
+			bool is_branch = false;
+
+			//if (global_index == 0) printf("%u ", i);
+			do {
+				if (opcode < RANDOMX_FREQ_IADD_RS)
+				{
+					//if (global_index == 0) printf("IADD_RS %u,%u\n", dst, src);
+					latency = reg_read_latency;
+					break;
+				}
+				opcode -= RANDOMX_FREQ_IADD_RS;
+
+				if (opcode < RANDOMX_FREQ_IADD_M)
+				{
+					//if (global_index == 0) printf("IADD_M %u,[%u]\n", dst, src);
+					latency = full_read_latency;
+					is_memory_op = true;
+					break;
+				}
+				opcode -= RANDOMX_FREQ_IADD_M;
+
+				if (opcode < RANDOMX_FREQ_ISUB_R)
+				{
+					//if (global_index == 0) printf("ISUB_R %u,%u\n", dst, src);
+					latency = reg_read_latency;
+					break;
+				}
+				opcode -= RANDOMX_FREQ_ISUB_R;
+
+				if (opcode < RANDOMX_FREQ_ISUB_M)
+				{
+					//if (global_index == 0) printf("ISUB_M %u,[%u]\n", dst, src);
+					latency = full_read_latency;
+					is_memory_op = true;
+					break;
+				}
+				opcode -= RANDOMX_FREQ_ISUB_M;
+
+				if (opcode < RANDOMX_FREQ_IMUL_R)
+				{
+					//if (global_index == 0) printf("IMUL_R %u,%u\n", dst, src);
+					latency = reg_read_latency;
+					break;
+				}
+				opcode -= RANDOMX_FREQ_IMUL_R;
+
+				if (opcode < RANDOMX_FREQ_IMUL_M)
+				{
+					//if (global_index == 0) printf("IMUL_M %u,[%u]\n", dst, src);
+					latency = full_read_latency;
+					is_memory_op = true;
+					break;
+				}
+				opcode -= RANDOMX_FREQ_IMUL_M;
+
+				if (opcode < RANDOMX_FREQ_IMULH_R)
+				{
+					//if (global_index == 0) printf("IMULH_R %u,%u\n", dst, src);
+					latency = reg_read_latency;
+					break;
+				}
+				opcode -= RANDOMX_FREQ_IMULH_R;
+
+				if (opcode < RANDOMX_FREQ_IMULH_M)
+				{
+					//if (global_index == 0) printf("IMULH_M %u,[%u]\n", dst, src);
+					latency = full_read_latency;
+					is_memory_op = true;
+					break;
+				}
+				opcode -= RANDOMX_FREQ_IMULH_M;
+
+				if (opcode < RANDOMX_FREQ_ISMULH_R)
+				{
+					//if (global_index == 0) printf("ISMULH_R %u,%u\n", dst, src);
+					latency = reg_read_latency;
+					break;
+				}
+				opcode -= RANDOMX_FREQ_ISMULH_R;
+
+				if (opcode < RANDOMX_FREQ_ISMULH_M)
+				{
+					//if (global_index == 0) printf("ISMULH_M %u,%u\n", dst, src);
+					latency = full_read_latency;
+					is_memory_op = true;
+					break;
+				}
+				opcode -= RANDOMX_FREQ_ISMULH_M;
+
+				if (opcode < RANDOMX_FREQ_IMUL_RCP)
+				{
+					//if (global_index == 0) printf("IMUL_RCP %u\n", dst);
+					if (inst.y)
+						latency = dst_latency;
+					else
+						is_nop = true;
+					break;
+				}
+				opcode -= RANDOMX_FREQ_IMUL_RCP;
+
+				if (opcode < RANDOMX_FREQ_INEG_R)
+				{
+					//if (global_index == 0) printf("INEG_R %u\n", dst);
+					latency = dst_latency;
+					break;
+				}
+				opcode -= RANDOMX_FREQ_INEG_R;
+
+				if (opcode < RANDOMX_FREQ_IXOR_R)
+				{
+					//if (global_index == 0) printf("IXOR_R %u,%u\n", dst, src);
+					latency = reg_read_latency;
+					break;
+				}
+				opcode -= RANDOMX_FREQ_IXOR_R;
+
+				if (opcode < RANDOMX_FREQ_IXOR_M)
+				{
+					//if (global_index == 0) printf("IXOR_M %u,%u\n", dst, src);
+					latency = full_read_latency;
+					is_memory_op = true;
+					break;
+				}
+				opcode -= RANDOMX_FREQ_IXOR_M;
+
+				if (opcode < RANDOMX_FREQ_IROR_R)
+				{
+					//if (global_index == 0) printf("IROR_R %u,%u\n", dst, src);
+					latency = reg_read_latency;
+					break;
+				}
+				opcode -= RANDOMX_FREQ_IROR_R;
+
+				if (opcode < RANDOMX_FREQ_ISWAP_R)
+				{
+					//if (global_index == 0) printf("ISWAP_R %u,%u\n", dst, src);
+					if (dst != src)
+						latency = reg_read_latency;
+					else
+						is_nop = true;
+					break;
+				}
+				opcode -= RANDOMX_FREQ_ISWAP_R;
+
+				if (opcode < RANDOMX_FREQ_CBRANCH)
+				{
+					//if (global_index == 0)
+					//{
+					//	const int32_t lastChanged = (inst.x & (0x80 << 8)) ? -1 : static_cast<int32_t>((inst.x >> 16) & 0xFF);
+					//	printf("CBRANCH %u,%d\n", dst, lastChanged + 1);
+					//}
+
+					is_branch = true;
+					latency = dst_latency;
+
+					// We can't move CBRANCH before any previous instructions
+					first_available_slot = last_used_slot + 1;
+					break;
+				}
+				opcode -= RANDOMX_FREQ_CBRANCH;
+
+				if (opcode < RANDOMX_FREQ_ISTORE)
+				{
+					//if (global_index == 0) printf("ISTORE [%u],%u\n", dst, src);
+					latency = reg_read_latency;
+					update_max(latency, (last_memory_op_slot / WORKERS_PER_HASH) + 1);
+					is_memory_op = true;
+					is_memory_store = true;
+					break;
+				}
+				opcode -= RANDOMX_FREQ_ISTORE;
+
+				is_nop = true;
+				//if (global_index == 0) printf("NOP\n");
+			} while (false);
+
+			if (is_nop)
+				continue;
+
+			int32_t first_allowed_slot = first_available_slot;
+			update_max(first_allowed_slot, latency * WORKERS_PER_HASH);
+
+			int32_t slot_to_use = last_used_slot + 1;
+			update_max(slot_to_use, first_allowed_slot);
+			for (int32_t j = last_used_slot; j >= first_allowed_slot; --j)
+				if (execution_plan[j] == 0)
+					slot_to_use = j;
+
+			//if (global_index == 0) printf("slot_to_use = %d\n", slot_to_use);
+			execution_plan[slot_to_use] = i;
+			++num_slots_used;
+
+			const uint32_t next_latency = (slot_to_use / WORKERS_PER_HASH) + 1;
+
+			if (!is_memory_store && !is_nop)
+			{
+				set_byte(registerLatency, dst, next_latency);
+			}
+
+			if (is_branch)
+			{
+				const uint32_t t = next_latency | (next_latency << 8);
+				registerLatency = t | (t << 16);
+				registerLatency = registerLatency | (registerLatency << 32);
+			}
+
+			if (is_memory_op)
+			{
+				last_memory_op_slot = slot_to_use;
+				if (is_memory_store)
+				{
+					ScratchpadLatency = next_latency;
+					if ((mod >> 4) >= randomx::StoreL3Condition)
+						ScratchpadHighLatency = next_latency;
+				}
+			}
+
+			if (slot_to_use == first_available_slot)
+			{
+				do {
+					++first_available_slot;
+				} while (execution_plan[first_available_slot] != 0);
+			}
+
+			if (slot_to_use > last_used_slot)
+			{
+				last_used_slot = slot_to_use;
+			}
+		}
+
+		//if (global_index == 0)
+		//{
+		//	printf("IPC = %.3f, num_slots_used = %u, last_used_slot = %d, registerLatency = %016llx \n",
+		//		num_slots_used / static_cast<double>(last_used_slot / WORKERS_PER_HASH + 1),
+		//		num_slots_used,
+		//		last_used_slot,
+		//		registerLatency
+		//	);
+		//	for (int j = 0; j <= last_used_slot; ++j)
+		//	{
+		//		if (!j || execution_plan[j])
+		//			printf("%03d ", execution_plan[j]);
+		//		else
+		//			printf("    ", execution_plan[j]);
+
+		//		if (((j + 1) % WORKERS_PER_HASH) == 0) printf("\n");
+		//	}
+		//	printf("\n");
+		//}
 
 		uint32_t ma = static_cast<uint32_t>(entropy[8]) & CacheLineAlignMask;
 		uint32_t mx = static_cast<uint32_t>(entropy[10]) & CacheLineAlignMask;
