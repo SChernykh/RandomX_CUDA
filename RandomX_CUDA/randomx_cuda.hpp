@@ -232,118 +232,117 @@ __device__ void print_inst(uint2 inst)
 	const uint32_t src = (inst.x >> 16) & 7;
 	const uint32_t mod = (inst.x >> 24);
 	const char* location = (src == dst) ? "L3" : ((mod % 4) ? "L1" : "L2");
-	if ((inst.x & (0x40 << 8)) != 0)
-		printf("-> ");
+	const char* branch_target = ((inst.x & (0x40 << 8)) != 0) ? "*" : " ";
 
 	do {
 		if (opcode < RANDOMX_FREQ_IADD_RS)
 		{
-			printf("IADD_RS r%u, r%u", dst, src);
+			printf("%sIADD_RS  r%u, r%u    ", branch_target, dst, src);
 			break;
 		}
 		opcode -= RANDOMX_FREQ_IADD_RS;
 
 		if (opcode < RANDOMX_FREQ_IADD_M)
 		{
-			printf("IADD_M r%u, %s[r%u]", dst, location, src);
+			printf("%sIADD_M   r%u, %s[r%u]", branch_target, dst, location, src);
 			break;
 		}
 		opcode -= RANDOMX_FREQ_IADD_M;
 
 		if (opcode < RANDOMX_FREQ_ISUB_R)
 		{
-			printf("ISUB_R r%u, r%u", dst, src);
+			printf("%sISUB_R   r%u, r%u    ", branch_target, dst, src);
 			break;
 		}
 		opcode -= RANDOMX_FREQ_ISUB_R;
 
 		if (opcode < RANDOMX_FREQ_ISUB_M)
 		{
-			printf("ISUB_M r%u, %s[r%u]", dst, location, src);
+			printf("%sISUB_M   r%u, %s[r%u]", branch_target, dst, location, src);
 			break;
 		}
 		opcode -= RANDOMX_FREQ_ISUB_M;
 
 		if (opcode < RANDOMX_FREQ_IMUL_R)
 		{
-			printf("IMUL_R r%u, r%u", dst, src);
+			printf("%sIMUL_R   r%u, r%u    ", branch_target, dst, src);
 			break;
 		}
 		opcode -= RANDOMX_FREQ_IMUL_R;
 
 		if (opcode < RANDOMX_FREQ_IMUL_M)
 		{
-			printf("IMUL_M r%u, %s[r%u]", dst, location, src);
+			printf("%sIMUL_M   r%u, %s[r%u]", branch_target, dst, location, src);
 			break;
 		}
 		opcode -= RANDOMX_FREQ_IMUL_M;
 
 		if (opcode < RANDOMX_FREQ_IMULH_R)
 		{
-			printf("IMULH_R r%u, r%u", dst, src);
+			printf("%sIMULH_R  r%u, r%u    ", branch_target, dst, src);
 			break;
 		}
 		opcode -= RANDOMX_FREQ_IMULH_R;
 
 		if (opcode < RANDOMX_FREQ_IMULH_M)
 		{
-			printf("IMULH_M r%u, %s[r%u]", dst, location, src);
+			printf("%sIMULH_M  r%u, %s[r%u]", branch_target, dst, location, src);
 			break;
 		}
 		opcode -= RANDOMX_FREQ_IMULH_M;
 
 		if (opcode < RANDOMX_FREQ_ISMULH_R)
 		{
-			printf("ISMULH_R r%u, r%u", dst, src);
+			printf("%sISMULH_R r%u, r%u    ", branch_target, dst, src);
 			break;
 		}
 		opcode -= RANDOMX_FREQ_ISMULH_R;
 
 		if (opcode < RANDOMX_FREQ_ISMULH_M)
 		{
-			printf("ISMULH_M r%u, %s[r%u]", dst, location, src);
+			printf("%sISMULH_M r%u, %s[r%u]", branch_target, dst, location, src);
 			break;
 		}
 		opcode -= RANDOMX_FREQ_ISMULH_M;
 
 		if (opcode < RANDOMX_FREQ_IMUL_RCP)
 		{
-			printf("IMUL_RCP r%u", dst);
+			printf("%sIMUL_RCP r%u        ", branch_target, dst);
 			break;
 		}
 		opcode -= RANDOMX_FREQ_IMUL_RCP;
 
 		if (opcode < RANDOMX_FREQ_INEG_R)
 		{
-			printf("INEG_R r%u", dst);
+			printf("%sINEG_R   r%u        ", branch_target, dst);
 			break;
 		}
 		opcode -= RANDOMX_FREQ_INEG_R;
 
 		if (opcode < RANDOMX_FREQ_IXOR_R)
 		{
-			printf("IXOR_R r%u, r%u", dst, src);
+			printf("%sIXOR_R   r%u, r%u    ", branch_target, dst, src);
 			break;
 		}
 		opcode -= RANDOMX_FREQ_IXOR_R;
 
 		if (opcode < RANDOMX_FREQ_IXOR_M)
 		{
-			printf("IXOR_M r%u, %s[r%u]", dst, location, src);
+			printf("%sIXOR_M   r%u, %s[r%u]", branch_target, dst, location, src);
 			break;
 		}
 		opcode -= RANDOMX_FREQ_IXOR_M;
 
 		if (opcode < RANDOMX_FREQ_IROR_R)
 		{
-			printf("IROR_R r%u, r%u", dst, src);
+			printf("%sIROR_R   r%u, r%u    ", branch_target, dst, src);
 			break;
 		}
 		opcode -= RANDOMX_FREQ_IROR_R;
 
 		if (opcode < RANDOMX_FREQ_ISWAP_R)
 		{
-			printf("ISWAP_R r%u, r%u", dst, src);
+			printf("%sISWAP_R  r%u, r%u    ", branch_target, dst, src);
 			break;
 		}
 		opcode -= RANDOMX_FREQ_ISWAP_R;
@@ -351,7 +350,7 @@ __device__ void print_inst(uint2 inst)
 		if (opcode < RANDOMX_FREQ_CBRANCH)
 		{
 			const int32_t lastChanged = (inst.x & (0x80 << 8)) ? -1 : static_cast<int32_t>((inst.x >> 16) & 0xFF);
-			printf("CBRANCH r%u, %d", dst, lastChanged + 1);
+			printf("%sCBRANCH  r%u, %3d   ", branch_target, dst, lastChanged + 1);
 			break;
 		}
 		opcode -= RANDOMX_FREQ_CBRANCH;
@@ -359,12 +358,12 @@ __device__ void print_inst(uint2 inst)
 		if (opcode < RANDOMX_FREQ_ISTORE)
 		{
 			location = ((mod >> 4) >= randomx::StoreL3Condition) ? "L3" : ((mod % 4) ? "L1" : "L2");
-			printf("ISTORE %s[r%u], r%u", location, dst, src);
+			printf("%sISTORE   %s[r%u], r%u", branch_target, location, dst, src);
 			break;
 		}
 		opcode -= RANDOMX_FREQ_ISTORE;
 
-		printf("NOP%u r%u, r%u", opcode, dst, src);
+		printf("%sNOP%u r%u, r%u", branch_target, opcode, dst, src);
 	} while (false);
 }
 
@@ -807,7 +806,11 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 		//		if (!j || execution_plan[j])
 		//		{
 		//			print_inst(src_program[execution_plan[j]]);
-		//			printf("\n");
+		//			printf(" | ");
+		//		}
+		//		else
+		//		{
+		//			printf("                     | ");
 		//		}
 
 		//		if (((j + 1) % WORKERS_PER_HASH) == 0) printf("\n");
