@@ -119,11 +119,8 @@ __device__ void test_memory_access(uint64_t* r, uint8_t* scratchpad, uint32_t ba
 // Bit 19: src=imm64
 // Bit 20: src = -src
 // Bits 21-25: opcode (add_rs, add, mul, umul_hi, imul_hi, neg, xor, ror, swap, cbranch, store)
-// Bits 26-27: how many parallel instructions to run starting with this one (1-4)
-// Bit 28: FP instruction for workers 0-1
-// Bit 29: FP instruction for workers 2-3
-// Bit 30: reserved
-// Bit 31: end of program
+// Bits 26-28: how many parallel instructions to run starting with this one (1-8)
+// Bits 29-31: how many of them are FP instructions (0-4)
 //
 
 #define DST_OFFSET			0
@@ -135,17 +132,17 @@ __device__ void test_memory_access(uint64_t* r, uint8_t* scratchpad, uint32_t ba
 #define SRC_IS_IMM64_OFFSET	19
 #define NEGATIVE_SRC_OFFSET	20
 #define OPCODE_OFFSET		21
+#define NUM_INSTS_OFFSET	26
+#define NUM_FP_INSTS_OFFSET	29
 
 // ISWAP r0, r0
 #define INST_NOP			(8 << OPCODE_OFFSET)
-
-#define PROGRAM_END			(1U << 31)
 
 #define LOC_L1 (32 - 14)
 #define LOC_L2 (32 - 18)
 #define LOC_L3 (32 - 21)
 
-#define WORKERS_PER_HASH 4
+#define WORKERS_PER_HASH 8
 
 __device__ uint64_t imul_rcp_value(uint32_t divisor)
 {
@@ -813,7 +810,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 		//			printf("\n");
 		//		}
 
-		//		//if (((j + 1) % WORKERS_PER_HASH) == 0) printf("\n");
+		//		if (((j + 1) % WORKERS_PER_HASH) == 0) printf("\n");
 		//	}
 		//	printf("\n\n");
 		//}
@@ -847,6 +844,12 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 		{
 			if (i && !execution_plan[i])
 				continue;
+
+			uint32_t num_workers = 1;
+			while ((i + num_workers <= last_used_slot) && ((i + num_workers) % WORKERS_PER_HASH) && execution_plan[i + num_workers])
+				++num_workers;
+
+			num_workers = (num_workers - 1) << NUM_INSTS_OFFSET;
 
 			const uint2 src_inst = src_program[execution_plan[i]];
 			uint2 inst = src_inst;
@@ -882,7 +885,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 					imm_buf[imm_index++] = inst.y;
 				}
 
-				*(compiled_program++) = inst.x;
+				*(compiled_program++) = inst.x | num_workers;
 				continue;
 			}
 			opcode -= RANDOMX_FREQ_IADD_RS;
@@ -894,7 +897,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				inst.x |= imm_index << IMM_OFFSET;
 				imm_buf[imm_index++] = inst.y;
 
-				*(compiled_program++) = inst.x;
+				*(compiled_program++) = inst.x | num_workers;
 				continue;
 			}
 			opcode -= RANDOMX_FREQ_IADD_M;
@@ -908,7 +911,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 					imm_buf[imm_index++] = inst.y;
 				}
 
-				*(compiled_program++) = inst.x;
+				*(compiled_program++) = inst.x | num_workers;
 				continue;
 			}
 			opcode -= RANDOMX_FREQ_ISUB_R;
@@ -920,7 +923,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				inst.x |= imm_index << IMM_OFFSET;
 				imm_buf[imm_index++] = inst.y;
 
-				*(compiled_program++) = inst.x;
+				*(compiled_program++) = inst.x | num_workers;
 				continue;
 			}
 			opcode -= RANDOMX_FREQ_ISUB_M;
@@ -934,7 +937,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 					imm_buf[imm_index++] = inst.y;
 				}
 
-				*(compiled_program++) = inst.x;
+				*(compiled_program++) = inst.x | num_workers;
 				continue;
 			}
 			opcode -= RANDOMX_FREQ_IMUL_R;
@@ -946,7 +949,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				inst.x |= imm_index << IMM_OFFSET;
 				imm_buf[imm_index++] = inst.y;
 
-				*(compiled_program++) = inst.x;
+				*(compiled_program++) = inst.x | num_workers;
 				continue;
 			}
 			opcode -= RANDOMX_FREQ_IMUL_M;
@@ -955,7 +958,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 			{
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (3 << OPCODE_OFFSET);
 
-				*(compiled_program++) = inst.x;
+				*(compiled_program++) = inst.x | num_workers;
 				continue;
 			}
 			opcode -= RANDOMX_FREQ_IMULH_R;
@@ -967,7 +970,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				inst.x |= imm_index << IMM_OFFSET;
 				imm_buf[imm_index++] = inst.y;
 
-				*(compiled_program++) = inst.x;
+				*(compiled_program++) = inst.x | num_workers;
 				continue;
 			}
 			opcode -= RANDOMX_FREQ_IMULH_M;
@@ -976,7 +979,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 			{
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (4 << OPCODE_OFFSET);
 
-				*(compiled_program++) = inst.x;
+				*(compiled_program++) = inst.x | num_workers;
 				continue;
 			}
 			opcode -= RANDOMX_FREQ_ISMULH_R;
@@ -988,7 +991,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				inst.x |= imm_index << IMM_OFFSET;
 				imm_buf[imm_index++] = inst.y;
 
-				*(compiled_program++) = inst.x;
+				*(compiled_program++) = inst.x | num_workers;
 				continue;
 			}
 			opcode -= RANDOMX_FREQ_ISMULH_M;
@@ -998,7 +1001,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				const uint64_t r = imul_rcp_value(inst.y);
 				if (r == 1)
 				{
-					*(compiled_program++) = INST_NOP;
+					*(compiled_program++) = INST_NOP | num_workers;
 					continue;
 				}
 
@@ -1009,7 +1012,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				imm_buf[imm_index + 1] = ((const uint32_t*) &r)[1];
 				imm_index += 2;
 
-				*(compiled_program++) = inst.x;
+				*(compiled_program++) = inst.x | num_workers;
 				continue;
 			}
 			opcode -= RANDOMX_FREQ_IMUL_RCP;
@@ -1018,7 +1021,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 			{
 				inst.x = (dst << DST_OFFSET) | (5 << OPCODE_OFFSET);
 
-				*(compiled_program++) = inst.x;
+				*(compiled_program++) = inst.x | num_workers;
 				continue;
 			}
 			opcode -= RANDOMX_FREQ_INEG_R;
@@ -1032,7 +1035,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 					imm_buf[imm_index++] = inst.y;
 				}
 
-				*(compiled_program++) = inst.x;
+				*(compiled_program++) = inst.x | num_workers;
 				continue;
 			}
 			opcode -= RANDOMX_FREQ_IXOR_R;
@@ -1044,7 +1047,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				inst.x |= imm_index << IMM_OFFSET;
 				imm_buf[imm_index++] = inst.y;
 
-				*(compiled_program++) = inst.x;
+				*(compiled_program++) = inst.x | num_workers;
 				continue;
 			}
 			opcode -= RANDOMX_FREQ_IXOR_M;
@@ -1058,7 +1061,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 					imm_buf[imm_index++] = inst.y;
 				}
 
-				*(compiled_program++) = inst.x;
+				*(compiled_program++) = inst.x | num_workers;
 				continue;
 			}
 			opcode -= RANDOMX_FREQ_IROR_R;
@@ -1067,7 +1070,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 			{
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (8 << OPCODE_OFFSET);
 
-				*(compiled_program++) = (src != dst) ? inst.x : INST_NOP;
+				*(compiled_program++) = ((src != dst) ? inst.x : INST_NOP) | num_workers;;
 				continue;
 			}
 			opcode -= RANDOMX_FREQ_ISWAP_R;
@@ -1089,7 +1092,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 
 				branch_target_slot = -1;
 
-				*(compiled_program++) = inst.x;
+				*(compiled_program++) = inst.x | num_workers;
 				continue;
 			}
 			opcode -= RANDOMX_FREQ_CBRANCH;
@@ -1100,16 +1103,15 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (10 << OPCODE_OFFSET);
 				inst.x |= imm_index << IMM_OFFSET;
 				imm_buf[imm_index++] = inst.y;
-				*(compiled_program++) = inst.x;
+				*(compiled_program++) = inst.x | num_workers;
 				continue;
 			}
 			opcode -= RANDOMX_FREQ_ISTORE;
 
-			*(compiled_program++) = inst.x;
+			*(compiled_program++) = inst.x | num_workers;
 		}
 
-		for (;k < RANDOMX_PROGRAM_SIZE - 1; ++k)
-			*(compiled_program++) = PROGRAM_END;
+		*(uint32_t*)(R + 20) = static_cast<uint32_t>(compiled_program - (uint32_t*)(R + (REGISTERS_SIZE + IMM_BUF_SIZE) / sizeof(uint64_t)));
 	}
 }
 
@@ -1160,6 +1162,8 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 
 	ulonglong2 eMask = ((ulonglong2*)(R + 18))[0];
 
+	const uint32_t program_length = *(uint32_t*)(R + 20);
+
 	uint32_t spAddr0 = first ? mx : 0;
 	uint32_t spAddr1 = first ? ma : 0;
 
@@ -1177,6 +1181,10 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 
 	uint32_t* imm_buf = (uint32_t*)(R + REGISTERS_SIZE / sizeof(uint64_t));
 	uint32_t* compiled_program = (uint32_t*)(R + (REGISTERS_SIZE + IMM_BUF_SIZE) / sizeof(uint64_t));
+
+#if WORKERS_PER_HASH > 1
+	const uint32_t workers_mask = ((1 << WORKERS_PER_HASH) - 1) << ((threadIdx.x / 8) * 8);
+#endif
 
 	#pragma unroll(1)
 	for (int ic = 0; ic < num_iterations; ++ic)
@@ -1204,115 +1212,146 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 
 		__syncwarp();
 
-		if (sub == 0)
+#if WORKERS_PER_HASH < 8
+		if (sub < WORKERS_PER_HASH)
+#endif
 		{
 			#pragma unroll(1)
-			for (int32_t ip = 0; ip < RANDOMX_PROGRAM_SIZE; ++ip)
+			for (int32_t ip = 0; ip < program_length;)
 			{
 				uint32_t inst = compiled_program[ip];
-
-				asm("// INSTRUCTION DECODING BEGIN");
-
-				if (inst & PROGRAM_END)
-					break;
-
-				uint64_t* dst_ptr = (uint64_t*)((uint8_t*)(R) + ((inst >> DST_OFFSET) & 7) * 8);
-				uint64_t* src_ptr = (uint64_t*)((uint8_t*)(R) + ((inst >> SRC_OFFSET) & 7) * 8);
-				uint32_t* imm_ptr = imm_buf + ((inst >> IMM_OFFSET) & 255);
-
-				uint64_t dst = *dst_ptr;
-				uint64_t src = *src_ptr;
-				uint2 imm;
-				imm.x = imm_ptr[0];
-				imm.y = imm_ptr[1];
-
-				const uint32_t opcode = (inst >> OPCODE_OFFSET) & 15;
-				const uint32_t location = (inst >> LOC_OFFSET) & 3;
-
-				asm("// INSTRUCTION DECODING END");
-
-				if (location)
+#if WORKERS_PER_HASH > 1
+				const uint32_t num_workers = (inst >> NUM_INSTS_OFFSET) & (WORKERS_PER_HASH - 1);
+				if (sub <= num_workers)
+#endif
 				{
-					asm("// SCRATCHPAD ACCESS BEGIN");
+#if WORKERS_PER_HASH > 1
+					inst = compiled_program[ip + sub];
+#endif
 
-					constexpr uint32_t loc_shift_values = (LOC_L1 << 8) | (LOC_L2 << 16) | (LOC_L3 << 24);
-					uint32_t loc_shift;
-					asm("bfe.u32 %0, %1, %2, 8;" : "=r"(loc_shift) : "r"(loc_shift_values), "r"(location << 3));
-					const uint32_t mask = 0xFFFFFFFFU >> loc_shift;
+					asm("// INSTRUCTION DECODING BEGIN");
 
-					const bool is_read = (opcode != 10);
-					uint32_t addr = is_read ? ((loc_shift == LOC_L3) ? 0 : static_cast<uint32_t>(src)) : static_cast<uint32_t>(dst);
-					addr += static_cast<int32_t>(imm.x);
-					addr &= mask;
+					uint64_t* dst_ptr = (uint64_t*)((uint8_t*)(R) + ((inst >> DST_OFFSET) & 7) * 8);
+					uint64_t* src_ptr = (uint64_t*)((uint8_t*)(R) + ((inst >> SRC_OFFSET) & 7) * 8);
+					uint32_t* imm_ptr = imm_buf + ((inst >> IMM_OFFSET) & 255);
 
-					uint64_t offset;
-					asm("mad.wide.u32 %0,%1,%2,%3;" : "=l"(offset) : "r"(addr & 0xFFFFFFC0U), "r"(batch_size), "l"(static_cast<uint64_t>(addr & 0x38)));
+					uint64_t dst = *dst_ptr;
+					uint64_t src = *src_ptr;
+					uint2 imm;
+					imm.x = imm_ptr[0];
+					imm.y = imm_ptr[1];
 
-					if (is_read)
-						src = *(uint64_t*)(scratchpad + offset);
-					else
-						*(uint64_t*)(scratchpad + offset) = src;
+					const uint32_t opcode = (inst >> OPCODE_OFFSET) & 15;
+					const uint32_t location = (inst >> LOC_OFFSET) & 3;
 
-					asm("// SCRATCHPAD ACCESS END");
+					asm("// INSTRUCTION DECODING END");
+
+					if (location)
+					{
+						asm("// SCRATCHPAD ACCESS BEGIN");
+
+						constexpr uint32_t loc_shift_values = (LOC_L1 << 8) | (LOC_L2 << 16) | (LOC_L3 << 24);
+						uint32_t loc_shift;
+						asm("bfe.u32 %0, %1, %2, 8;" : "=r"(loc_shift) : "r"(loc_shift_values), "r"(location << 3));
+						const uint32_t mask = 0xFFFFFFFFU >> loc_shift;
+
+						const bool is_read = (opcode != 10);
+						uint32_t addr = is_read ? ((loc_shift == LOC_L3) ? 0 : static_cast<uint32_t>(src)) : static_cast<uint32_t>(dst);
+						addr += static_cast<int32_t>(imm.x);
+						addr &= mask;
+
+						uint64_t offset;
+						asm("mad.wide.u32 %0,%1,%2,%3;" : "=l"(offset) : "r"(addr & 0xFFFFFFC0U), "r"(batch_size), "l"(static_cast<uint64_t>(addr & 0x38)));
+
+						if (is_read)
+							src = *(uint64_t*)(scratchpad + offset);
+						else
+							*(uint64_t*)(scratchpad + offset) = src;
+
+						asm("// SCRATCHPAD ACCESS END");
+					}
+
+					if (opcode != 10)
+					{
+						asm("// EXECUTION BEGIN");
+
+						if (inst & (1 << SRC_IS_IMM32_OFFSET)) src = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(imm.x)));
+
+						// Check instruction opcodes (most frequent instructions come first)
+						if (opcode < 2)
+						{
+							if (inst & (1 << NEGATIVE_SRC_OFFSET)) src = static_cast<uint64_t>(-static_cast<int64_t>(src));
+							if (opcode == 0) dst += static_cast<int32_t>(imm.x);
+							const uint32_t shift = (inst >> SHIFT_OFFSET) & 3;
+							dst += src << shift;
+						}
+						else if (opcode == 2)
+						{
+							if (inst & (1 << SRC_IS_IMM64_OFFSET)) src = *((uint64_t*)&imm);
+							dst *= src;
+						}
+						else if (opcode == 6)
+						{
+							dst ^= src;
+						}
+						else if (opcode == 9)
+						{
+							dst += static_cast<int32_t>(imm.x);
+							if ((static_cast<uint32_t>(dst) & (randomx::ConditionMask << (imm.y & 31))) == 0)
+							{
+								ip = (static_cast<int32_t>(imm.y) >> 5);
+#if WORKERS_PER_HASH > 1
+								ip -= num_workers;
+#endif
+							}
+						}
+						else if (opcode == 7)
+						{
+							const uint32_t shift = src & 63;
+							dst = (dst >> shift) | (dst << (64 - shift));
+						}
+						else if (opcode == 3)
+						{
+							dst = __umul64hi(dst, src);
+						}
+						else if (opcode == 4)
+						{
+							dst = static_cast<uint64_t>(__mul64hi(static_cast<int64_t>(dst), static_cast<int64_t>(src)));
+						}
+						else if (opcode == 8)
+						{
+							*src_ptr = dst;
+							dst = src;
+						}
+						else if (opcode == 5)
+						{
+							dst = static_cast<uint64_t>(-static_cast<int64_t>(dst));
+						}
+
+						*dst_ptr = dst;
+
+						asm("// EXECUTION END");
+					}
 				}
 
+#if WORKERS_PER_HASH > 1
+				asm("// SYNCHRONIZATION OF INSTRUCTION POINTER BEGIN");
+
+				int32_t next_ip = ip;
+
+				#pragma unroll
+				for (int i = 1; i < WORKERS_PER_HASH; i <<= 1)
 				{
-					asm("// EXECUTION BEGIN");
-
-					if (inst & (1 << SRC_IS_IMM32_OFFSET)) src = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(imm.x)));
-
-					// Check instruction opcodes (most frequent instructions come first)
-					if (opcode < 2)
-					{
-						if (inst & (1 << NEGATIVE_SRC_OFFSET)) src = static_cast<uint64_t>(-static_cast<int64_t>(src));
-						if (opcode == 0) dst += static_cast<int32_t>(imm.x);
-						const uint32_t shift = (inst >> SHIFT_OFFSET) & 3;
-						dst += src << shift;
-					}
-					else if (opcode == 2)
-					{
-						if (inst & (1 << SRC_IS_IMM64_OFFSET)) src = *((uint64_t*)&imm);
-						dst *= src;
-					}
-					else if (opcode == 6)
-					{
-						dst ^= src;
-					}
-					else if (opcode == 9)
-					{
-						dst += static_cast<int32_t>(imm.x);
-						if ((static_cast<uint32_t>(dst) & (randomx::ConditionMask << (imm.y & 31))) == 0)
-							ip = static_cast<int32_t>(imm.y) >> 5;
-					}
-					else if (opcode == 7)
-					{
-						const uint32_t shift = src & 63;
-						dst = (dst >> shift) | (dst << (64 - shift));
-					}
-					else if (opcode == 3)
-					{
-						dst = __umul64hi(dst, src);
-					}
-					else if (opcode == 4)
-					{
-						dst = static_cast<uint64_t>(__mul64hi(static_cast<int64_t>(dst), static_cast<int64_t>(src)));
-					}
-					else if (opcode == 8)
-					{
-						*src_ptr = dst;
-						dst = src;
-					}
-					else if (opcode == 5)
-					{
-						dst = static_cast<uint64_t>(-static_cast<int64_t>(dst));
-					}
-
-					*dst_ptr = dst;
-
-					asm("// EXECUTION END");
+					const int32_t t = __shfl_xor_sync(workers_mask, next_ip, i, 8); 
+					if (t < next_ip) next_ip = t;
 				}
 
-				//__syncwarp((1U << 0) | (1U << 8));
+				ip = next_ip + num_workers + 1;
+
+				asm("// SYNCHRONIZATION OF INSTRUCTION POINTER END");
+#else
+				++ip;
+#endif
 			}
 		}
 
