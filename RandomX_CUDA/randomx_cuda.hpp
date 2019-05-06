@@ -146,7 +146,7 @@ __device__ void test_memory_access(uint64_t* r, uint8_t* scratchpad, uint32_t ba
 
 __device__ uint64_t imul_rcp_value(uint32_t divisor)
 {
-	if (divisor == 0)
+	if ((divisor & (divisor - 1)) == 0)
 	{
 		return 1ULL;
 	}
@@ -419,7 +419,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 
 			if (opcode < RANDOMX_FREQ_IMUL_RCP)
 			{
-				if (inst.y)
+				if (inst.y & (inst.y - 1))
 				{
 					set_byte(registerLastChanged, dst, i);
 					set_byte(registerWasChanged, dst, 1);
@@ -609,7 +609,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				{
 					//if (global_index == 0) printf("IMUL_RCP %u\n", dst);
 					is_src_read = false;
-					if (inst.y)
+					if (inst.y & (inst.y - 1))
 						latency = dst_latency;
 					else
 						is_nop = true;
