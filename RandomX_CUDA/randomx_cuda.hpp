@@ -1236,7 +1236,8 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 			*(compiled_program++) = inst.x | num_workers;
 		}
 
-		*(uint32_t*)(R + 20) = static_cast<uint32_t>(compiled_program - (uint32_t*)(R + (REGISTERS_SIZE + IMM_BUF_SIZE) / sizeof(uint64_t)));
+		((uint32_t*)(R + 20))[0] = static_cast<uint32_t>(compiled_program - (uint32_t*)(R + (REGISTERS_SIZE + IMM_BUF_SIZE) / sizeof(uint64_t)));
+		((uint32_t*)(R + 20))[1] = 0;
 	}
 }
 
@@ -1291,7 +1292,8 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 
 	ulonglong2 eMask = ((ulonglong2*)(R + 18))[0];
 
-	const uint32_t program_length = *(uint32_t*)(R + 20);
+	const uint32_t program_length = ((uint32_t*)(R + 20))[0];
+	uint32_t fprc = ((uint32_t*)(R + 20))[1];
 
 	uint32_t spAddr0 = first ? mx : 0;
 	uint32_t spAddr1 = first ? ma : 0;
@@ -1359,6 +1361,7 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 				const int32_t num_workers = (inst >> NUM_INSTS_OFFSET) & (WORKERS_PER_HASH - 1);
 				const int32_t num_fp_insts = (inst >> NUM_FP_INSTS_OFFSET) & (WORKERS_PER_HASH - 1);
 				const int32_t num_insts = num_workers - num_fp_insts;
+				bool ip_changed = false;
 				if (sub <= num_workers)
 				{
 					const int32_t inst_offset = sub - num_fp_insts;
@@ -1451,6 +1454,7 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 							{
 								ip = (static_cast<int32_t>(imm.y) >> 5);
 								ip -= num_insts;
+								ip_changed = true;
 							}
 						}
 						else if (opcode == 7)
@@ -1489,16 +1493,15 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 				{
 					asm("// SYNCHRONIZATION OF INSTRUCTION POINTER BEGIN");
 
-					int32_t next_ip = ip;
-
-					#pragma unroll
-					for (int i = 1; i < WORKERS_PER_HASH; i <<= 1)
+					const int mask = __ballot_sync(workers_mask, ip_changed);
+					if (mask)
 					{
-						const int32_t t = __shfl_xor_sync(workers_mask, next_ip, i, 8);
-						if (t < next_ip) next_ip = t;
+						int lane;
+						asm("bfind.u32 %0, %1;" : "=r"(lane) : "r"(mask));
+						ip = __shfl_sync(workers_mask, ip, lane, 16);
 					}
 
-					ip = next_ip + num_insts + 1;
+					ip += num_insts + 1;
 
 					asm("// SYNCHRONIZATION OF INSTRUCTION POINTER END");
 				}
@@ -1555,5 +1558,6 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 	{
 		((uint32_t*)(p + 16))[0] = ma;
 		((uint32_t*)(p + 16))[1] = mx;
+		((uint32_t*)(p + 20))[1] = fprc;
 	}
 }
