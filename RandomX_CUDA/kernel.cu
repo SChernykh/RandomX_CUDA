@@ -46,7 +46,7 @@ int main(int argc, char** argv)
 		printf("Usage: RandomX_CUDA.exe --mine device_id [--validate] [--bfactor N] [--workers N]\n\n");
 		printf("device_id is 0 if you only have 1 GPU\n");
 		printf("bfactor can be 0-10, default is 0. Increase it if you get CUDA errors/driver crashes/screen lags.\n");
-		printf("workers can be 1,2,4,8, default is 4. Choose the value that gives you the best hashrate (it's usually 4 or 8).\n\n");
+		printf("workers can be 2,4,8, default is 4. Choose the value that gives you the best hashrate (it's usually 4 or 8).\n\n");
 		printf("Examples:\nRandomX_CUDA.exe --test 0\nRandomX_CUDA.exe --mine 0 --validate --bfactor 3 --workers 4\n");
 		return 0;
 	}
@@ -86,7 +86,6 @@ int main(int argc, char** argv)
 			workers_per_hash = atoi(argv[i + 1]);
 			switch (workers_per_hash)
 			{
-			case 1:
 			case 2:
 			case 4:
 			case 8:
@@ -262,22 +261,22 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash)
 
 	printf("%zu MB free GPU memory left\n", free_mem >> 20);
 
-	const void* init_vm_list[] = { init_vm<1>, init_vm<2>, init_vm<4>, init_vm<8> };
-	const void* execute_vm_list[] = { execute_vm<1>, execute_vm<2>, execute_vm<4>, execute_vm<8> };
+	const void* init_vm_list[] = { init_vm<2>, init_vm<4>, init_vm<8> };
+	const void* execute_vm_list[] = { execute_vm<2>, execute_vm<4>, execute_vm<8> };
 
-	for (int i = 0; i < 4; ++i)
+	for (int i = 0; i < 3; ++i)
 	{
 		cudaStatus = cudaFuncSetCacheConfig(init_vm_list[i], cudaFuncCachePreferShared);
 		if (cudaStatus != cudaSuccess)
 		{
-			fprintf(stderr, "Failed to set cache config for init_vm<%d>!", i);
+			fprintf(stderr, "Failed to set cache config for init_vm<%d>!", 1 << i);
 			return false;
 		}
 
 		cudaStatus = cudaFuncSetCacheConfig(execute_vm_list[i], cudaFuncCachePreferShared);
 		if (cudaStatus != cudaSuccess)
 		{
-			fprintf(stderr, "Failed to set cache config for execute_vm<%d>!", i);
+			fprintf(stderr, "Failed to set cache config for execute_vm<%d>!", 1 << i);
 			return false;
 		}
 	}
@@ -329,7 +328,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash)
 		{
 			const double dt = duration_cast<nanoseconds>(cur_time - prev_time).count() / 1e9;
 			if (validate)
-				printf("%u hashes validated successfully, %.0f h/s%s\t\r", nonce, batch_size / dt, cpu_limited ? ", limited by CPU" : "");
+				printf("%u hashes validated successfully, %.0f h/s%s    \r", nonce, batch_size / dt, cpu_limited ? ", limited by CPU" : "                ");
 			else
 				printf("%.0f h/s\t\r", batch_size / dt);
 		}
@@ -349,7 +348,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash)
 			return false;
 		}
 
-		for (size_t i = 0; i < PROGRAM_COUNT; ++i)
+		for (size_t i = 0; i < RANDOMX_PROGRAM_COUNT; ++i)
 		{
 			fillAes1Rx4<ENTROPY_SIZE, false><<<batch_size / 32, 32 * 4>>>(hashes_gpu, entropy_gpu, batch_size);
 			cudaStatus = cudaGetLastError();
@@ -360,14 +359,6 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash)
 
 			switch (workers_per_hash)
 			{
-			case 1:
-				init_vm<1><<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu);
-				for (int j = 0, n = 1 << bfactor; j < n; ++j)
-				{
-					execute_vm<1><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
-				}
-				break;
-
 			case 2:
 				init_vm<2><<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu);
 				for (int j = 0, n = 1 << bfactor; j < n; ++j)
@@ -393,7 +384,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash)
 				break;
 			}
 
-			if (i == PROGRAM_COUNT - 1)
+			if (i == RANDOMX_PROGRAM_COUNT - 1)
 			{
 				hashAes1Rx4<SCRATCHPAD_SIZE, 192, VM_STATE_SIZE><<<batch_size / 32, 32 * 4>>>(scratchpads_gpu, vm_states_gpu, batch_size);
 				cudaStatus = cudaGetLastError();
