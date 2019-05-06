@@ -142,8 +142,6 @@ __device__ void test_memory_access(uint64_t* r, uint8_t* scratchpad, uint32_t ba
 #define LOC_L2 (32 - 18)
 #define LOC_L3 (32 - 21)
 
-#define WORKERS_PER_HASH 8
-
 __device__ uint64_t imul_rcp_value(uint32_t divisor)
 {
 	if ((divisor & (divisor - 1)) == 0)
@@ -367,6 +365,7 @@ __device__ void print_inst(uint2 inst)
 	} while (false);
 }
 
+template<int WORKERS_PER_HASH>
 __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_states)
 {
 	__shared__ uint32_t execution_plan_buf[RANDOMX_PROGRAM_SIZE * WORKERS_PER_HASH * (32 / 8) / sizeof(uint32_t)];
@@ -1134,6 +1133,7 @@ __device__ void load_buffer(T (&dst_buf)[N], const void* src_buf)
 	}
 }
 
+template<int WORKERS_PER_HASH>
 __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scratchpads, const void* dataset_ptr, uint32_t batch_size, uint32_t num_iterations, bool first, bool last)
 {
 	// 2 hashes per warp, 4 KB shared memory for VM states
@@ -1185,9 +1185,9 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 	uint32_t* imm_buf = (uint32_t*)(R + REGISTERS_SIZE / sizeof(uint64_t));
 	uint32_t* compiled_program = (uint32_t*)(R + (REGISTERS_SIZE + IMM_BUF_SIZE) / sizeof(uint64_t));
 
-#if WORKERS_PER_HASH > 1
-	const uint32_t workers_mask = ((1 << WORKERS_PER_HASH) - 1) << ((threadIdx.x / 8) * 8);
-#endif
+	uint32_t workers_mask;
+	if (WORKERS_PER_HASH > 1)
+		workers_mask = ((1 << WORKERS_PER_HASH) - 1) << ((threadIdx.x / 8) * 8);
 
 	#pragma unroll(1)
 	for (int ic = 0; ic < num_iterations; ++ic)
@@ -1215,22 +1215,17 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 
 		__syncwarp();
 
-#if WORKERS_PER_HASH < 8
-		if (sub < WORKERS_PER_HASH)
-#endif
+		if ((WORKERS_PER_HASH == 8) || (sub < WORKERS_PER_HASH))
 		{
 			#pragma unroll(1)
 			for (int32_t ip = 0; ip < program_length;)
 			{
 				uint32_t inst = compiled_program[ip];
-#if WORKERS_PER_HASH > 1
-				const uint32_t num_workers = (inst >> NUM_INSTS_OFFSET) & (WORKERS_PER_HASH - 1);
-				if (sub <= num_workers)
-#endif
+				const uint32_t num_workers = (WORKERS_PER_HASH > 1) ? ((inst >> NUM_INSTS_OFFSET) & (WORKERS_PER_HASH - 1)) : 0;
+				if ((WORKERS_PER_HASH == 1) || (sub <= num_workers))
 				{
-#if WORKERS_PER_HASH > 1
-					inst = compiled_program[ip + sub];
-#endif
+					if (WORKERS_PER_HASH > 1)
+						inst = compiled_program[ip + sub];
 
 					asm("// INSTRUCTION DECODING BEGIN");
 
@@ -1303,9 +1298,8 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 							if ((static_cast<uint32_t>(dst) & (randomx::ConditionMask << (imm.y & 31))) == 0)
 							{
 								ip = (static_cast<int32_t>(imm.y) >> 5);
-#if WORKERS_PER_HASH > 1
-								ip -= num_workers;
-#endif
+								if (WORKERS_PER_HASH > 1)
+									ip -= num_workers;
 							}
 						}
 						else if (opcode == 7)
@@ -1337,24 +1331,27 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 					}
 				}
 
-#if WORKERS_PER_HASH > 1
-				asm("// SYNCHRONIZATION OF INSTRUCTION POINTER BEGIN");
-
-				int32_t next_ip = ip;
-
-				#pragma unroll
-				for (int i = 1; i < WORKERS_PER_HASH; i <<= 1)
+				if (WORKERS_PER_HASH > 1)
 				{
-					const int32_t t = __shfl_xor_sync(workers_mask, next_ip, i, 8); 
-					if (t < next_ip) next_ip = t;
+					asm("// SYNCHRONIZATION OF INSTRUCTION POINTER BEGIN");
+
+					int32_t next_ip = ip;
+
+					#pragma unroll
+					for (int i = 1; i < WORKERS_PER_HASH; i <<= 1)
+					{
+						const int32_t t = __shfl_xor_sync(workers_mask, next_ip, i, 8);
+						if (t < next_ip) next_ip = t;
+					}
+
+					ip = next_ip + num_workers + 1;
+
+					asm("// SYNCHRONIZATION OF INSTRUCTION POINTER END");
 				}
-
-				ip = next_ip + num_workers + 1;
-
-				asm("// SYNCHRONIZATION OF INSTRUCTION POINTER END");
-#else
-				++ip;
-#endif
+				else
+				{
+					++ip;
+				}
 			}
 		}
 

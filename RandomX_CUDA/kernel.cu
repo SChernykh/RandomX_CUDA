@@ -36,15 +36,18 @@ along with RandomX CUDA.  If not, see<http://www.gnu.org/licenses/>.
 #include "aes_cuda.hpp"
 #include "randomx_cuda.hpp"
 
-bool test_mining(bool validate, int bfactor);
+bool test_mining(bool validate, int bfactor, int workers_per_hash);
 void tests();
 
 int main(int argc, char** argv)
 {
 	if (argc < 3)
 	{
-		printf("Usage: RandomX_CUDA.exe --mine device_id [--validate] [--bfactor N]\n");
-		printf("Examples:\nRandomX_CUDA.exe --test 0\nRandomX_CUDA.exe --mine 0 --validate --bfactor 3\n");
+		printf("Usage: RandomX_CUDA.exe --mine device_id [--validate] [--bfactor N] [--workers N]\n\n");
+		printf("device_id is 0 if you only have 1 GPU\n");
+		printf("bfactor can be 0-10, default is 0. Increase it if you get CUDA errors/driver crashes/screen lags.\n");
+		printf("workers can be 1,2,4,8, default is 4. Choose the value that gives you the best hashrate (it's usually 4 or 8).\n\n");
+		printf("Examples:\nRandomX_CUDA.exe --test 0\nRandomX_CUDA.exe --mine 0 --validate --bfactor 3 --workers 4\n");
 		return 0;
 	}
 
@@ -63,6 +66,7 @@ int main(int argc, char** argv)
 
 	bool validate = false;
 	int bfactor = 0;
+	int workers_per_hash = 4;
 	for (int i = 0; i < argc; ++i)
 	{
 		if (strcmp(argv[i], "--validate") == 0)
@@ -76,10 +80,26 @@ int main(int argc, char** argv)
 			if (bfactor < 0) bfactor = 0;
 			if (bfactor > 10) bfactor = 10;
 		}
+
+		if ((strcmp(argv[i], "--workers") == 0) && (i + 1 < argc))
+		{
+			workers_per_hash = atoi(argv[i + 1]);
+			switch (workers_per_hash)
+			{
+			case 1:
+			case 2:
+			case 4:
+			case 8:
+				break;
+
+			default:
+				workers_per_hash = 4;
+			}
+		}
 	}
 
 	if (strcmp(argv[1], "--mine") == 0)
-		test_mining(validate, bfactor);
+		test_mining(validate, bfactor, workers_per_hash);
 	else if (strcmp(argv[1], "--test") == 0)
 		tests();
 
@@ -121,9 +141,9 @@ private:
 	void* p;
 };
 
-bool test_mining(bool validate, int bfactor)
+bool test_mining(bool validate, int bfactor, int workers_per_hash)
 {
-	printf("Testing mining: CPU validation is %s, bfactor is %d\n", validate ? "ON" : "OFF", bfactor);
+	printf("Testing mining: CPU validation is %s, bfactor is %d, %d workers per hash\n", validate ? "ON" : "OFF", bfactor, workers_per_hash);
 
 	cudaError_t cudaStatus;
 
@@ -242,11 +262,24 @@ bool test_mining(bool validate, int bfactor)
 
 	printf("%zu MB free GPU memory left\n", free_mem >> 20);
 
-	cudaStatus = cudaFuncSetCacheConfig(execute_vm, cudaFuncCachePreferShared);
-	if (cudaStatus != cudaSuccess)
+	const void* init_vm_list[] = { init_vm<1>, init_vm<2>, init_vm<4>, init_vm<8> };
+	const void* execute_vm_list[] = { execute_vm<1>, execute_vm<2>, execute_vm<4>, execute_vm<8> };
+
+	for (int i = 0; i < 4; ++i)
 	{
-		fprintf(stderr, "Failed to set cache config for execute_vm!");
-		return false;
+		cudaStatus = cudaFuncSetCacheConfig(init_vm_list[i], cudaFuncCachePreferShared);
+		if (cudaStatus != cudaSuccess)
+		{
+			fprintf(stderr, "Failed to set cache config for init_vm<%d>!", i);
+			return false;
+		}
+
+		cudaStatus = cudaFuncSetCacheConfig(execute_vm_list[i], cudaFuncCachePreferShared);
+		if (cudaStatus != cudaSuccess)
+		{
+			fprintf(stderr, "Failed to set cache config for execute_vm<%d>!", i);
+			return false;
+		}
 	}
 
 	time_point<steady_clock> prev_time;
@@ -325,9 +358,40 @@ bool test_mining(bool validate, int bfactor)
 				return false;
 			}
 
-			init_vm<<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu);
-			for (int j = 0, n = 1 << bfactor; j < n; ++j)
-				execute_vm<<<batch_size / 2, 2 * 8>>>(vm_states_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
+			switch (workers_per_hash)
+			{
+			case 1:
+				init_vm<1><<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu);
+				for (int j = 0, n = 1 << bfactor; j < n; ++j)
+				{
+					execute_vm<1><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
+				}
+				break;
+
+			case 2:
+				init_vm<2><<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu);
+				for (int j = 0, n = 1 << bfactor; j < n; ++j)
+				{
+					execute_vm<2><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
+				}
+				break;
+
+			case 4:
+				init_vm<4><<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu);
+				for (int j = 0, n = 1 << bfactor; j < n; ++j)
+				{
+					execute_vm<4><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
+				}
+				break;
+
+			case 8:
+				init_vm<8><<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu);
+				for (int j = 0, n = 1 << bfactor; j < n; ++j)
+				{
+					execute_vm<8><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
+				}
+				break;
+			}
 
 			if (i == PROGRAM_COUNT - 1)
 			{
