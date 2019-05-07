@@ -117,7 +117,7 @@ __device__ void test_memory_access(uint64_t* r, uint8_t* scratchpad, uint32_t ba
 // Bit 18: src=imm32
 // Bit 19: src=imm64
 // Bit 20: src = -src
-// Bits 21-25: opcode (add_rs, add, mul, umul_hi, imul_hi, neg, xor, ror, swap, cbranch, store, fswap, fadd, fmul, fsqrt, fdiv)
+// Bits 21-25: opcode (add_rs, add, mul, umul_hi, imul_hi, neg, xor, ror, swap, cbranch, store, fswap, fadd, fmul, fsqrt, fdiv, cfround)
 // Bits 26-28: how many parallel instructions to run starting with this one (1-8)
 // Bits 29-31: how many of them are FP instructions (0-4)
 //
@@ -416,6 +416,13 @@ __device__ void print_inst(uint2 inst)
 		}
 		opcode -= RANDOMX_FREQ_CBRANCH;
 
+		if (opcode < RANDOMX_FREQ_CFROUND)
+		{
+			printf("%s%sCFROUND  r%u, %2d    ", branch_target, fp_inst, src, inst.y & 63);
+			break;
+		}
+		opcode -= RANDOMX_FREQ_CFROUND;
+
 		if (opcode < RANDOMX_FREQ_ISTORE)
 		{
 			location = ((mod >> 4) >= randomx::StoreL3Condition) ? "L3" : ((mod % 4) ? "L1" : "L2");
@@ -593,6 +600,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 			bool is_swap = false;
 			bool is_src_read = true;
 			bool is_fp = false;
+			bool is_cfround = false;
 
 			//if (global_index == 0) printf("%u ", i);
 			do {
@@ -830,6 +838,22 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				}
 				opcode -= RANDOMX_FREQ_CBRANCH;
 
+				if (opcode < RANDOMX_FREQ_CFROUND)
+				{
+					latency = src_latency;
+					update_max(latency, get_byte(registerLatencyFP, 0));
+					update_max(latency, get_byte(registerLatencyFP, 1));
+					update_max(latency, get_byte(registerLatencyFP, 2));
+					update_max(latency, get_byte(registerLatencyFP, 3));
+					update_max(latency, get_byte(registerLatencyFP, 4));
+					update_max(latency, get_byte(registerLatencyFP, 5));
+					update_max(latency, get_byte(registerLatencyFP, 6));
+					update_max(latency, get_byte(registerLatencyFP, 7));
+					is_cfround = true;
+					break;
+				}
+				opcode -= RANDOMX_FREQ_CFROUND;
+
 				if (opcode < RANDOMX_FREQ_ISTORE)
 				{
 					latency = reg_read_latency;
@@ -937,7 +961,13 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				update_max(last_memory_op_slot, slot_to_use);
 			}
 
-			if (is_fp)
+			if (is_cfround)
+			{
+				const uint32_t t = next_latency | (next_latency << 8);
+				registerLatencyFP = t | (t << 16);
+				registerLatencyFP = registerLatencyFP | (registerLatencyFP << 32);
+			}
+			else if (is_fp)
 			{
 				set_byte(registerLatencyFP, dst, next_latency);
 
@@ -1004,12 +1034,12 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 		//		registerLatency
 		//	);
 
-		//	//for (int j = 0; j < RANDOMX_PROGRAM_SIZE; ++j)
-		//	//{
-		//	//	print_inst(src_program[j]);
-		//	//	printf("\n");
-		//	//}
-		//	//printf("\n");
+		//	for (int j = 0; j < RANDOMX_PROGRAM_SIZE; ++j)
+		//	{
+		//		print_inst(src_program[j]);
+		//		printf("\n");
+		//	}
+		//	printf("\n");
 
 		//	for (int j = 0; j <= last_used_slot; ++j)
 		//	{
@@ -1411,6 +1441,15 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 			}
 			opcode -= RANDOMX_FREQ_CBRANCH;
 
+			if (opcode < RANDOMX_FREQ_CFROUND)
+			{
+				inst.x = (src << SRC_OFFSET) | (16 << OPCODE_OFFSET) | ((inst.y & 63) << IMM_OFFSET);
+
+				*(compiled_program++) = inst.x | num_workers;
+				continue;
+			}
+			opcode -= RANDOMX_FREQ_CFROUND;
+
 			if (opcode < RANDOMX_FREQ_ISTORE)
 			{
 				const uint32_t location = ((mod >> 4) >= randomx::StoreL3Condition) ? 3 : ((mod % 4) ? 1 : 2);
@@ -1426,7 +1465,6 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 		}
 
 		((uint32_t*)(R + 20))[0] = static_cast<uint32_t>(compiled_program - (uint32_t*)(R + (REGISTERS_SIZE + IMM_BUF_SIZE) / sizeof(uint64_t)));
-		((uint32_t*)(R + 20))[1] = 0;
 	}
 }
 
@@ -1447,7 +1485,7 @@ __device__ void load_buffer(T (&dst_buf)[N], const void* src_buf)
 }
 
 template<int WORKERS_PER_HASH>
-__global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scratchpads, const void* dataset_ptr, uint32_t batch_size, uint32_t num_iterations, bool first, bool last)
+__global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* rounding, void* scratchpads, const void* dataset_ptr, uint32_t batch_size, uint32_t num_iterations, bool first, bool last)
 {
 	// 2 hashes per warp, 4 KB shared memory for VM states
 	__shared__ uint64_t vm_states_local[(VM_STATE_SIZE * 2) / sizeof(uint64_t)];
@@ -1483,7 +1521,7 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 	ulonglong2 eMask = ((ulonglong2*)(R + 18))[0];
 
 	const uint32_t program_length = ((uint32_t*)(R + 20))[0];
-	uint32_t fprc = ((uint32_t*)(R + 20))[1];
+	uint32_t fprc = ((uint32_t*) rounding)[idx];
 
 	uint32_t spAddr0 = first ? mx : 0;
 	uint32_t spAddr1 = first ? ma : 0;
@@ -1552,7 +1590,11 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 				const int32_t num_workers = (inst >> NUM_INSTS_OFFSET) & (WORKERS_PER_HASH - 1);
 				const int32_t num_fp_insts = (inst >> NUM_FP_INSTS_OFFSET) & (WORKERS_PER_HASH - 1);
 				const int32_t num_insts = num_workers - num_fp_insts;
+
+				bool sync_needed = false;
 				bool ip_changed = false;
+				bool fprc_changed = false;
+
 				if (sub <= num_workers)
 				{
 					const int32_t inst_offset = sub - num_fp_insts;
@@ -1565,7 +1607,7 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 
 					asm("// INSTRUCTION DECODING BEGIN");
 
-					const uint32_t opcode = (inst >> OPCODE_OFFSET) & 15;
+					const uint32_t opcode = (inst >> OPCODE_OFFSET) & 31;
 					const uint32_t location = (inst >> LOC_OFFSET) & 3;
 
 					const uint32_t reg_size_shift = is_fp ? 4 : 3;
@@ -1581,7 +1623,8 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 					uint64_t* dst_ptr = (uint64_t*)((uint8_t*)(R) + dst_offset);
 					uint64_t* src_ptr = (uint64_t*)((uint8_t*)(R) + src_offset);
 
-					uint32_t* imm_ptr = imm_buf + ((inst >> IMM_OFFSET) & 255);
+					const uint32_t imm_offset = (inst >> IMM_OFFSET) & 255;
+					uint32_t* imm_ptr = imm_buf + imm_offset;
 
 					uint64_t dst = *dst_ptr;
 					uint64_t src = *src_ptr;
@@ -1634,7 +1677,21 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 						{
 							if (location) src = bit_cast<uint64_t>(__int2double_rn(static_cast<int32_t>(src >> ((sub & 1) * 32))));
 							if (inst & (1 << NEGATIVE_SRC_OFFSET)) src ^= 0x8000000000000000ULL;
-							dst = bit_cast<uint64_t>(__dadd_rn(__longlong_as_double(dst), __longlong_as_double(src)));
+
+							const double a = __longlong_as_double(dst);
+							const double b = __longlong_as_double(src);
+
+							double result;
+							if (fprc == 0)
+								result = __dadd_rn(a, b);
+							else if (fprc == 1)
+								result = __dadd_rd(a, b);
+							else if (fprc == 2)
+								result = __dadd_ru(a, b);
+							else
+								result = __dadd_rz(a, b);
+
+							dst = bit_cast<uint64_t>(result);
 						}
 						else if (opcode == 2)
 						{
@@ -1647,7 +1704,20 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 						}
 						else if (opcode == 13)
 						{
-							dst = bit_cast<uint64_t>(__dmul_rn(__longlong_as_double(dst), __longlong_as_double(src)));
+							const double a = __longlong_as_double(dst);
+							const double b = __longlong_as_double(src);
+
+							double result;
+							if (fprc == 0)
+								result = __dmul_rn(a, b);
+							else if (fprc == 1)
+								result = __dmul_rd(a, b);
+							else if (fprc == 2)
+								result = __dmul_ru(a, b);
+							else
+								result = __dmul_rz(a, b);
+
+							dst = bit_cast<uint64_t>(result);
 						}
 						else if (opcode == 9)
 						{
@@ -1657,6 +1727,7 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 								ip = (static_cast<int32_t>(imm.y) >> 5);
 								ip -= num_insts;
 								ip_changed = true;
+								sync_needed = true;
 							}
 						}
 						else if (opcode == 7)
@@ -1670,7 +1741,19 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 						}
 						else if (opcode == 14)
 						{
-							dst = bit_cast<uint64_t>(__dsqrt_rn(__longlong_as_double(dst)));
+							const double a = __longlong_as_double(dst);
+
+							double result;
+							if (fprc == 0)
+								result = __dsqrt_rn(a);
+							else if (fprc == 1)
+								result = __dsqrt_rd(a);
+							else if (fprc == 2)
+								result = __dsqrt_ru(a);
+							else
+								result = __dsqrt_rz(a);
+
+							dst = bit_cast<uint64_t>(result);
 						}
 						else if (opcode == 3)
 						{
@@ -1690,33 +1773,66 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 							src = bit_cast<uint64_t>(__int2double_rn(static_cast<int32_t>(src >> ((sub & 1) * 32))));
 							src &= randomx::dynamicMantissaMask;
 							src |= xexponentMask;
-							dst = bit_cast<uint64_t>(__ddiv_rn(__longlong_as_double(dst), __longlong_as_double(src)));
+
+							const double a = __longlong_as_double(dst);
+							const double b = __longlong_as_double(src);
+
+							double result;
+							if (fprc == 0)
+								result = __ddiv_rn(a, b);
+							else if (fprc == 1)
+								result = __ddiv_rd(a, b);
+							else if (fprc == 2)
+								result = __ddiv_ru(a, b);
+							else
+								result = __ddiv_rz(a, b);
+
+							dst = bit_cast<uint64_t>(result);
 						}
 						else if (opcode == 5)
 						{
 							dst = static_cast<uint64_t>(-static_cast<int64_t>(dst));
 						}
+						else if (opcode == 16)
+						{
+							const uint32_t new_fprc = ((src >> imm_offset) | (src << (64 - imm_offset))) & 3;
+							fprc_changed = new_fprc != fprc;
+							sync_needed |= fprc_changed;
+							fprc = new_fprc;
+						}
 
-						*dst_ptr = dst;
+						if (opcode != 16)
+							*dst_ptr = dst;
 
 						asm("// EXECUTION END");
 					}
 				}
 
 				{
-					asm("// SYNCHRONIZATION OF INSTRUCTION POINTER BEGIN");
+					asm("// SYNCHRONIZATION OF INSTRUCTION POINTER AND ROUNDING MODE BEGIN");
 
-					const int mask = __ballot_sync(workers_mask, ip_changed);
-					if (mask)
+					if (__ballot_sync(workers_mask, sync_needed))
 					{
-						int lane;
-						asm("bfind.u32 %0, %1;" : "=r"(lane) : "r"(mask));
-						ip = __shfl_sync(workers_mask, ip, lane, 16);
+						int mask = __ballot_sync(workers_mask, ip_changed);
+						if (mask)
+						{
+							int lane;
+							asm("bfind.u32 %0, %1;" : "=r"(lane) : "r"(mask));
+							ip = __shfl_sync(workers_mask, ip, lane, 16);
+						}
+
+						mask = __ballot_sync(workers_mask, fprc_changed);
+						if (mask)
+						{
+							int lane;
+							asm("bfind.u32 %0, %1;" : "=r"(lane) : "r"(mask));
+							fprc = __shfl_sync(workers_mask, fprc, lane, 16);
+						}
 					}
 
-					ip += num_insts + 1;
+					asm("// SYNCHRONIZATION OF INSTRUCTION POINTER AND ROUNDING MODE END");
 
-					asm("// SYNCHRONIZATION OF INSTRUCTION POINTER END");
+					ip += num_insts + 1;
 				}
 			}
 		}
@@ -1762,6 +1878,8 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 	uint64_t* p = ((uint64_t*) vm_states) + idx * (VM_STATE_SIZE / sizeof(uint64_t));
 	p[sub] = R[sub];
 
+	((uint32_t*)rounding)[idx] = fprc;
+
 	if (last)
 	{
 		p[sub +  8] = bit_cast<uint64_t>(F[sub]) ^ bit_cast<uint64_t>(E[sub]);
@@ -1771,6 +1889,5 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* scra
 	{
 		((uint32_t*)(p + 16))[0] = ma;
 		((uint32_t*)(p + 16))[1] = mx;
-		((uint32_t*)(p + 20))[1] = fprc;
 	}
 }

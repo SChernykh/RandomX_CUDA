@@ -239,6 +239,13 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash)
 		return false;
 	}
 
+	GPUPtr rounding_gpu(batch_size * sizeof(uint32_t));
+	if (!rounding_gpu)
+	{
+		fprintf(stderr, "Failed to allocate GPU memory for VM rounding data!");
+		return false;
+	}
+
 	GPUPtr blockTemplate_gpu(sizeof(blockTemplate));
 	if (!blockTemplate_gpu)
 	{
@@ -348,6 +355,12 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash)
 			return false;
 		}
 
+		cudaStatus = cudaMemset(rounding_gpu, 0, batch_size * sizeof(uint32_t));
+		if (cudaStatus != cudaSuccess) {
+			fprintf(stderr, "cudaMemset failed!");
+			return false;
+		}
+
 		for (size_t i = 0; i < RANDOMX_PROGRAM_COUNT; ++i)
 		{
 			fillAes1Rx4<ENTROPY_SIZE, false><<<batch_size / 32, 32 * 4>>>(hashes_gpu, entropy_gpu, batch_size);
@@ -363,7 +376,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash)
 				init_vm<2><<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu);
 				for (int j = 0, n = 1 << bfactor; j < n; ++j)
 				{
-					execute_vm<2><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
+					execute_vm<2><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, rounding_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
 				}
 				break;
 
@@ -371,7 +384,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash)
 				init_vm<4><<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu);
 				for (int j = 0, n = 1 << bfactor; j < n; ++j)
 				{
-					execute_vm<4><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
+					execute_vm<4><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, rounding_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
 				}
 				break;
 
@@ -379,7 +392,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash)
 				init_vm<8><<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu);
 				for (int j = 0, n = 1 << bfactor; j < n; ++j)
 				{
-					execute_vm<8><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
+					execute_vm<8><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, rounding_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
 				}
 				break;
 			}
@@ -791,7 +804,7 @@ void tests()
 
 		cudaStatus = cudaMemset(nonce_gpu, 0, sizeof(uint64_t));
 		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaMemcpy failed!");
+			fprintf(stderr, "cudaMemset failed!");
 			return;
 		}
 
