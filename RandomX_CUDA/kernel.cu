@@ -429,9 +429,9 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash)
 			if (memcmp(hashes.data(), hashes_check.data(), batch_size * 32) != 0)
 			{
 				fprintf(stderr, "\nCPU validation error, ");
-				for (uint32_t i = 0; i < batch_size * 32; ++i)
+				for (uint32_t i = 0; i < batch_size * 32; i += 32)
 				{
-					if (hashes[i] != hashes_check[i])
+					if (memcmp(hashes.data() + i, hashes_check.data() + i, 32))
 					{
 						fprintf(stderr, "failing nonce = %u\n", nonce + i / 32);
 						break;
