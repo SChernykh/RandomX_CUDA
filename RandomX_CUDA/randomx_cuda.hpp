@@ -1039,9 +1039,9 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 					int32_t value = get_byte(registerReadCycle, dst);
 					update_max(value, slot_to_use / WORKERS_PER_HASH);
 					set_byte(registerReadCycle, dst, value);
-					ScratchpadLatency = next_latency;
+					ScratchpadLatency = slot_to_use / WORKERS_PER_HASH;
 					if ((mod >> 4) >= randomx::StoreL3Condition)
-						ScratchpadHighLatency = next_latency;
+						ScratchpadHighLatency = slot_to_use / WORKERS_PER_HASH;
 				}
 			}
 
@@ -1728,10 +1728,12 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* roun
 						uint64_t offset;
 						asm("mad.wide.u32 %0,%1,%2,%3;" : "=l"(offset) : "r"(addr & 0xFFFFFFC0U), "r"(batch_size), "l"(static_cast<uint64_t>(addr & 0x38)));
 
+						uint64_t* ptr = (uint64_t*)(scratchpad + offset);
+
 						if (is_read)
-							src = *(uint64_t*)(scratchpad + offset);
+							src = *ptr;
 						else
-							*(uint64_t*)(scratchpad + offset) = src;
+							*ptr = src;
 
 						asm("// SCRATCHPAD ACCESS END");
 					}

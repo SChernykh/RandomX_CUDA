@@ -8,7 +8,7 @@ GPUs tested so far:
 
 Model|CryptonightR H/S|RandomX H/S|Relative speed
 -----|---------------|-----------|--------------
-GTX 1660 Ti|620|545|87.9%
+GTX 1660 Ti|620|554|89.4%
 
 ## Donations
 
