@@ -1226,7 +1226,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				const uint32_t location = (src == dst) ? 3 : ((mod % 4) ? 1 : 2);
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (1 << OPCODE_OFFSET);
 				inst.x |= imm_index << IMM_OFFSET;
-				imm_buf[imm_index++] = inst.y;
+				imm_buf[imm_index++] = (inst.y & 0xFC1FFFFFU) | (((location == 1) ? LOC_L1 : ((location == 2) ? LOC_L2 : LOC_L3)) << 21);
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
@@ -1252,7 +1252,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				const uint32_t location = (src == dst) ? 3 : ((mod % 4) ? 1 : 2);
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (1 << OPCODE_OFFSET) | (1 << NEGATIVE_SRC_OFFSET);
 				inst.x |= imm_index << IMM_OFFSET;
-				imm_buf[imm_index++] = inst.y;
+				imm_buf[imm_index++] = (inst.y & 0xFC1FFFFFU) | (((location == 1) ? LOC_L1 : ((location == 2) ? LOC_L2 : LOC_L3)) << 21);
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
@@ -1278,7 +1278,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				const uint32_t location = (src == dst) ? 3 : ((mod % 4) ? 1 : 2);
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (2 << OPCODE_OFFSET);
 				inst.x |= imm_index << IMM_OFFSET;
-				imm_buf[imm_index++] = inst.y;
+				imm_buf[imm_index++] = (inst.y & 0xFC1FFFFFU) | (((location == 1) ? LOC_L1 : ((location == 2) ? LOC_L2 : LOC_L3)) << 21);
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
@@ -1299,7 +1299,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				const uint32_t location = (src == dst) ? 3 : ((mod % 4) ? 1 : 2);
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (3 << OPCODE_OFFSET);
 				inst.x |= imm_index << IMM_OFFSET;
-				imm_buf[imm_index++] = inst.y;
+				imm_buf[imm_index++] = (inst.y & 0xFC1FFFFFU) | (((location == 1) ? LOC_L1 : ((location == 2) ? LOC_L2 : LOC_L3)) << 21);
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
@@ -1320,7 +1320,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				const uint32_t location = (src == dst) ? 3 : ((mod % 4) ? 1 : 2);
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (4 << OPCODE_OFFSET);
 				inst.x |= imm_index << IMM_OFFSET;
-				imm_buf[imm_index++] = inst.y;
+				imm_buf[imm_index++] = (inst.y & 0xFC1FFFFFU) | (((location == 1) ? LOC_L1 : ((location == 2) ? LOC_L2 : LOC_L3)) << 21);
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
@@ -1376,7 +1376,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				const uint32_t location = (src == dst) ? 3 : ((mod % 4) ? 1 : 2);
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (6 << OPCODE_OFFSET);
 				inst.x |= imm_index << IMM_OFFSET;
-				imm_buf[imm_index++] = inst.y;
+				imm_buf[imm_index++] = (inst.y & 0xFC1FFFFFU) | (((location == 1) ? LOC_L1 : ((location == 2) ? LOC_L2 : LOC_L3)) << 21);
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
@@ -1429,7 +1429,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				const uint32_t location = (mod % 4) ? 1 : 2;
 				inst.x = ((dst % randomx::RegisterCountFlt) << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (12 << OPCODE_OFFSET);
 				inst.x |= imm_index << IMM_OFFSET;
-				imm_buf[imm_index++] = inst.y;
+				imm_buf[imm_index++] = (inst.y & 0xFC1FFFFFU) | (((location == 1) ? LOC_L1 : ((location == 2) ? LOC_L2 : LOC_L3)) << 21);
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
@@ -1450,7 +1450,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				const uint32_t location = (mod % 4) ? 1 : 2;
 				inst.x = ((dst % randomx::RegisterCountFlt) << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (12 << OPCODE_OFFSET) | (1 << NEGATIVE_SRC_OFFSET);
 				inst.x |= imm_index << IMM_OFFSET;
-				imm_buf[imm_index++] = inst.y;
+				imm_buf[imm_index++] = (inst.y & 0xFC1FFFFFU) | (((location == 1) ? LOC_L1 : ((location == 2) ? LOC_L2 : LOC_L3)) << 21);
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
@@ -1480,7 +1480,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				const uint32_t location = (mod % 4) ? 1 : 2;
 				inst.x = (((dst % randomx::RegisterCountFlt) + randomx::RegisterCountFlt) << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (15 << OPCODE_OFFSET);
 				inst.x |= imm_index << IMM_OFFSET;
-				imm_buf[imm_index++] = inst.y;
+				imm_buf[imm_index++] = (inst.y & 0xFC1FFFFFU) | (((location == 1) ? LOC_L1 : ((location == 2) ? LOC_L2 : LOC_L3)) << 21);
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
@@ -1532,7 +1532,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				const uint32_t location = ((mod >> 4) >= randomx::StoreL3Condition) ? 3 : ((mod % 4) ? 1 : 2);
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (location << LOC_OFFSET) | (10 << OPCODE_OFFSET);
 				inst.x |= imm_index << IMM_OFFSET;
-				imm_buf[imm_index++] = inst.y;
+				imm_buf[imm_index++] = (inst.y & 0xFC1FFFFFU) | (((location == 1) ? LOC_L1 : ((location == 2) ? LOC_L2 : LOC_L3)) << 21);
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
 			}
@@ -1715,9 +1715,8 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* roun
 					{
 						asm("// SCRATCHPAD ACCESS BEGIN");
 
-						constexpr uint32_t loc_shift_values = (LOC_L1 << 8) | (LOC_L2 << 16) | (LOC_L3 << 24);
 						uint32_t loc_shift;
-						asm("bfe.u32 %0, %1, %2, 8;" : "=r"(loc_shift) : "r"(loc_shift_values), "r"(location << 3));
+						asm("bfe.u32 %0, %1, 21, 5;" : "=r"(loc_shift) : "r"(imm.x));
 						const uint32_t mask = 0xFFFFFFFFU >> loc_shift;
 
 						const bool is_read = (opcode != 10);

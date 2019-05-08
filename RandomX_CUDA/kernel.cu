@@ -188,6 +188,8 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash)
 		randomx_cache *myCache = randomx_alloc_cache((randomx_flags)(RANDOMX_FLAG_JIT));
 		randomx_init_cache(myCache, mySeed, sizeof mySeed);
 		myDataset = randomx_alloc_dataset(RANDOMX_FLAG_LARGE_PAGES);
+		if (!myDataset)
+			myDataset = randomx_alloc_dataset(RANDOMX_FLAG_DEFAULT);
 
 		time_point<steady_clock> t1 = high_resolution_clock::now();
 
