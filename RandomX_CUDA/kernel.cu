@@ -246,6 +246,15 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash)
 		return false;
 	}
 
+	GPUPtr num_vm_cycles_gpu(sizeof(uint64_t));
+	if (!num_vm_cycles_gpu)
+	{
+		fprintf(stderr, "Failed to allocate GPU memory for VM num cyles data!");
+		return false;
+	}
+
+	cudaMemset(num_vm_cycles_gpu, 0, sizeof(uint64_t));
+
 	GPUPtr blockTemplate_gpu(sizeof(blockTemplate));
 	if (!blockTemplate_gpu)
 	{
@@ -334,8 +343,13 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash)
 		if (k > 0)
 		{
 			const double dt = duration_cast<nanoseconds>(cur_time - prev_time).count() / 1e9;
+			uint64_t data = uint64_t(-1);
+			cudaMemcpy(&data, num_vm_cycles_gpu, sizeof(uint64_t), cudaMemcpyDeviceToHost);
+
+			const double num_vm_cycles = static_cast<uint32_t>(data);
+			const double num_slots_used = static_cast<uint32_t>(data >> 32);
 			if (validate)
-				printf("%u hashes validated successfully, %.0f h/s%s    \r", nonce, batch_size / dt, cpu_limited ? ", limited by CPU" : "                ");
+				printf("%u hashes validated successfully, IPC %.4f, WPC %.4f, %.0f h/s%s    \r", nonce, nonce * RANDOMX_PROGRAM_SIZE * RANDOMX_PROGRAM_COUNT / num_vm_cycles, num_slots_used / num_vm_cycles, batch_size / dt, cpu_limited ? ", limited by CPU" : "                ");
 			else
 				printf("%.0f h/s\t\r", batch_size / dt);
 		}
@@ -373,7 +387,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash)
 			switch (workers_per_hash)
 			{
 			case 2:
-				init_vm<2><<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu);
+				init_vm<2><<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu, num_vm_cycles_gpu);
 				for (int j = 0, n = 1 << bfactor; j < n; ++j)
 				{
 					execute_vm<2><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, rounding_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
@@ -381,7 +395,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash)
 				break;
 
 			case 4:
-				init_vm<4><<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu);
+				init_vm<4><<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu, num_vm_cycles_gpu);
 				for (int j = 0, n = 1 << bfactor; j < n; ++j)
 				{
 					execute_vm<4><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, rounding_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
@@ -389,7 +403,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash)
 				break;
 
 			case 8:
-				init_vm<8><<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu);
+				init_vm<8><<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu, num_vm_cycles_gpu);
 				for (int j = 0, n = 1 << bfactor; j < n; ++j)
 				{
 					execute_vm<8><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, rounding_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);

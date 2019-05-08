@@ -229,7 +229,7 @@ __device__ void print_inst(uint2 inst)
 	const uint32_t src = (inst.x >> 16) & 7;
 	const uint32_t mod = (inst.x >> 24);
 	const char* location = (src == dst) ? "L3" : ((mod % 4) ? "L1" : "L2");
-	const char* branch_target = ((inst.x & (0x40 << 8)) != 0) ? "*" : " ";
+	const char* branch_target = ((inst.x & (0x40 << 8)) != 0) ? "*" : (((inst.x & (0x10 << 8)) != 0) ? "!" : " ");
 	const char* fp_inst = ((inst.x & (0x20 << 8)) != 0) ? "^" : " ";
 
 	do {
@@ -436,7 +436,7 @@ __device__ void print_inst(uint2 inst)
 }
 
 template<int WORKERS_PER_HASH>
-__global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_states)
+__global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_states, void* num_vm_cycles)
 {
 	__shared__ uint32_t execution_plan_buf[RANDOMX_PROGRAM_SIZE * WORKERS_PER_HASH * (32 / 8) / sizeof(uint32_t)];
 
@@ -468,8 +468,8 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 		// Initialize CBRANCH instructions
 		for (uint32_t i = 0; i < RANDOMX_PROGRAM_SIZE; ++i)
 		{
-			// Clear branch target and FP flags
-			*(uint32_t*)(src_program + i) &= ~(0x60U << 8);
+			// Clear all src flags (branch target, FP, branch)
+			*(uint32_t*)(src_program + i) &= ~(0xF8U << 8);
 
 			const uint2 src_inst = src_program[i];
 			uint2 inst = src_inst;
@@ -532,7 +532,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				uint32_t creg = get_condition_register(registerLastChanged, registerWasChanged, registerUsageCount, lastChanged);
 
 				// Store condition register and branch target in CBRANCH instruction
-				*(uint32_t*)(src_program + i) = (src_inst.x & 0xFF0000FFU) | ((creg | ((lastChanged == -1) ? 0x80 : 0)) << 8) | ((static_cast<uint32_t>(lastChanged) & 0xFF) << 16);
+				*(uint32_t*)(src_program + i) = (src_inst.x & 0xFF0000FFU) | ((creg | ((lastChanged == -1) ? 0x90 : 0x10)) << 8) | ((static_cast<uint32_t>(lastChanged) & 0xFF) << 16);
 
 				// Mark branch target instruction (src |= 0x40)
 				*(uint32_t*)(src_program + lastChanged + 1) |= 0x40 << 8;
@@ -563,6 +563,16 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 		int32_t first_instruction_slot = -1;
 		bool first_instruction_fp = false;
 
+		//if (global_index == 0)
+		//{
+		//	for (int j = 0; j < RANDOMX_PROGRAM_SIZE; ++j)
+		//	{
+		//		print_inst(src_program[j]);
+		//		printf("\n");
+		//	}
+		//	printf("\n");
+		//}
+
 		// Schedule instructions
 		bool update_branch_target_mark = false;
 		bool first_available_slot_is_branch_target = false;
@@ -575,7 +585,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 			const uint32_t src = (inst.x >> 16) & 7;
 			const uint32_t mod = (inst.x >> 24);
 
-			const bool is_branch_target = (inst.x & (0x40 << 8)) != 0;
+			bool is_branch_target = (inst.x & (0x40 << 8)) != 0;
 			if (is_branch_target)
 			{
 				// If an instruction is a branch target, we can't move it before any previous instructions
@@ -604,7 +614,6 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 			bool is_fp = false;
 			bool is_cfround = false;
 
-			//if (global_index == 0) printf("%u ", i);
 			do {
 				if (opcode < RANDOMX_FREQ_IADD_RS)
 				{
@@ -875,6 +884,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 			{
 				*(uint32_t*)(src_program + i) |= 0x40 << 8;
 				update_branch_target_mark = false;
+				is_branch_target = true;
 			}
 
 			int32_t first_allowed_slot = first_available_slot;
@@ -897,21 +907,46 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				{
 					if ((execution_plan[j] == 0) && (execution_plan[j + 1] == 0) && ((j + 1) % WORKERS_PER_HASH))
 					{
-						bool has_integer = false;
+						bool blocked = false;
 						for (int32_t k = (j / WORKERS_PER_HASH) * WORKERS_PER_HASH; k < j; ++k)
 						{
 							if (execution_plan[k] || (k == first_instruction_slot))
 							{
-								if ((src_program[execution_plan[k]].x & (0x20 << 8)) == 0)
+								const uint32_t inst = src_program[execution_plan[k]].x;
+
+								// If there is an integer instruction which is a branch target or a branch, or this FP instruction is a branch target itself, we can't reorder it to add more FP instructions to this cycle
+								if (((inst & (0x20 << 8)) == 0) && (((inst & (0x50 << 8)) != 0) || is_branch_target))
 								{
-									has_integer = true;
+									blocked = true;
 									continue;
 								}
 							}
 						}
-						if (!has_integer)
+
+						if (!blocked)
 						{
-							slot_to_use = j;
+							for (int32_t k = (j / WORKERS_PER_HASH) * WORKERS_PER_HASH; k < j; ++k)
+							{
+								if (execution_plan[k] || (k == first_instruction_slot))
+								{
+									const uint32_t inst = src_program[execution_plan[k]].x;
+									if ((inst & (0x20 << 8)) == 0)
+									{
+										execution_plan[j] = execution_plan[k];
+										execution_plan[j + 1] = execution_plan[k + 1];
+										if (first_instruction_slot == k) first_instruction_slot = j;
+										if (first_instruction_slot == k + 1) first_instruction_slot = j + 1;
+										slot_to_use = k;
+										break;
+									}
+								}
+							}
+
+							if (slot_to_use < 0)
+							{
+								slot_to_use = j;
+							}
+
 							break;
 						}
 					}
@@ -1010,7 +1045,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				}
 			}
 
-			if (slot_to_use == first_available_slot)
+			if (execution_plan[first_available_slot] || (first_available_slot == first_instruction_slot))
 			{
 				if (first_available_slot_is_branch_target)
 				{
@@ -1026,29 +1061,60 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				} while ((first_available_slot < RANDOMX_PROGRAM_SIZE * WORKERS_PER_HASH) && (execution_plan[first_available_slot] != 0));
 			}
 
+			if (is_branch_target)
+			{
+				update_max(first_available_slot, is_fp ? (slot_to_use + 2) : (slot_to_use + 1));
+			}
+
 			update_max(last_used_slot, is_fp ? (slot_to_use + 1) : slot_to_use);
+			while (execution_plan[last_used_slot] || (last_used_slot == first_instruction_slot) || ((last_used_slot == first_instruction_slot + 1) && first_instruction_fp))
+			{
+				++last_used_slot;
+			}
+			--last_used_slot;
+
 			if (is_fp && (last_used_slot >= first_allowed_slot_cfround))
 				first_allowed_slot_cfround = last_used_slot + 1;
+
+			//if (global_index == 0)
+			//{
+			//	printf("slot_to_use = %d, first_available_slot = %d, last_used_slot = %d\n", slot_to_use, first_available_slot, last_used_slot);
+			//	for (int j = 0; j <= last_used_slot; ++j)
+			//	{
+			//		if (execution_plan[j] || (j == first_instruction_slot) || ((j == first_instruction_slot + 1) && first_instruction_fp))
+			//		{
+			//			print_inst(src_program[execution_plan[j]]);
+			//			printf(" | ");
+			//		}
+			//		else
+			//		{
+			//			printf("                      | ");
+			//		}
+			//		if (((j + 1) % WORKERS_PER_HASH) == 0) printf("\n");
+			//	}
+			//	printf("\n\n");
+			//}
 		}
 
 		//if (global_index == 0)
 		//{
-		//	printf("IPC = %.3f, WPC = %.3f, num_instructions = %u, num_slots_used = %u, last_used_slot = %d, registerLatency = %016llx, registerLatencyFP = %016llx \n",
+		//	printf("IPC = %.3f, WPC = %.3f, num_instructions = %u, num_slots_used = %u, first_instruction_slot = %d, last_used_slot = %d, registerLatency = %016llx, registerLatencyFP = %016llx \n",
 		//		num_instructions / static_cast<double>(last_used_slot / WORKERS_PER_HASH + 1),
 		//		num_slots_used / static_cast<double>(last_used_slot / WORKERS_PER_HASH + 1),
 		//		num_instructions,
 		//		num_slots_used,
+		//		first_instruction_slot,
 		//		last_used_slot,
 		//		registerLatency,
 		//		registerLatencyFP
 		//	);
 
-		//	for (int j = 0; j < RANDOMX_PROGRAM_SIZE; ++j)
-		//	{
-		//		print_inst(src_program[j]);
-		//		printf("\n");
-		//	}
-		//	printf("\n");
+		//	//for (int j = 0; j < RANDOMX_PROGRAM_SIZE; ++j)
+		//	//{
+		//	//	print_inst(src_program[j]);
+		//	//	printf("\n");
+		//	//}
+		//	//printf("\n");
 
 		//	for (int j = 0; j <= last_used_slot; ++j)
 		//	{
@@ -1065,6 +1131,8 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 		//	}
 		//	printf("\n\n");
 		//}
+
+		atomicAdd((uint64_t*) num_vm_cycles, static_cast<uint64_t>((last_used_slot / WORKERS_PER_HASH) + 1) + (static_cast<uint64_t>(num_slots_used) << 32));
 
 		uint32_t ma = static_cast<uint32_t>(entropy[8]) & CacheLineAlignMask;
 		uint32_t mx = static_cast<uint32_t>(entropy[10]) & CacheLineAlignMask;
@@ -1887,7 +1955,10 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* roun
 	uint64_t* p = ((uint64_t*) vm_states) + idx * (VM_STATE_SIZE / sizeof(uint64_t));
 	p[sub] = R[sub];
 
-	((uint32_t*)rounding)[idx] = fprc;
+	if (sub == 0)
+	{
+		((uint32_t*) rounding)[idx] = fprc;
+	}
 
 	if (last)
 	{
