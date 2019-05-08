@@ -553,10 +553,12 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 		uint32_t ScratchpadLatency = 0;
 
 		int32_t first_available_slot = 0;
+		int32_t first_allowed_slot_cfround = 0;
 		int32_t last_used_slot = -1;
 		int32_t last_memory_op_slot = -1;
 
 		uint32_t num_slots_used = 0;
+		uint32_t num_instructions = 0;
 
 		int32_t first_instruction_slot = -1;
 		bool first_instruction_fp = false;
@@ -841,14 +843,6 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				if (opcode < RANDOMX_FREQ_CFROUND)
 				{
 					latency = src_latency;
-					update_max(latency, get_byte(registerLatencyFP, 0));
-					update_max(latency, get_byte(registerLatencyFP, 1));
-					update_max(latency, get_byte(registerLatencyFP, 2));
-					update_max(latency, get_byte(registerLatencyFP, 3));
-					update_max(latency, get_byte(registerLatencyFP, 4));
-					update_max(latency, get_byte(registerLatencyFP, 5));
-					update_max(latency, get_byte(registerLatencyFP, 6));
-					update_max(latency, get_byte(registerLatencyFP, 7));
 					is_cfround = true;
 					break;
 				}
@@ -885,7 +879,10 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 
 			int32_t first_allowed_slot = first_available_slot;
 			update_max(first_allowed_slot, latency * WORKERS_PER_HASH);
-			update_max(first_allowed_slot, get_byte(is_fp ? registerReadCycleFP : registerReadCycle, dst) * WORKERS_PER_HASH);
+			if (is_cfround)
+				update_max(first_allowed_slot, first_allowed_slot_cfround);
+			else
+				update_max(first_allowed_slot, get_byte(is_fp ? registerReadCycleFP : registerReadCycle, dst) * WORKERS_PER_HASH);
 
 			if (is_swap)
 				update_max(first_allowed_slot, get_byte(registerReadCycle, src) * WORKERS_PER_HASH);
@@ -937,6 +934,13 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				first_instruction_slot = slot_to_use;
 				first_instruction_fp = is_fp;
 			}
+
+			if (is_cfround)
+			{
+				first_allowed_slot_cfround = slot_to_use - (slot_to_use % WORKERS_PER_HASH) + WORKERS_PER_HASH;
+			}
+
+			++num_instructions;
 
 			execution_plan[slot_to_use] = i;
 			++num_slots_used;
@@ -1023,15 +1027,20 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 			}
 
 			update_max(last_used_slot, is_fp ? (slot_to_use + 1) : slot_to_use);
+			if (is_fp && (last_used_slot >= first_allowed_slot_cfround))
+				first_allowed_slot_cfround = last_used_slot + 1;
 		}
 
 		//if (global_index == 0)
 		//{
-		//	printf("IPC = %.3f, num_slots_used = %u, last_used_slot = %d, registerLatency = %016llx \n",
+		//	printf("IPC = %.3f, WPC = %.3f, num_instructions = %u, num_slots_used = %u, last_used_slot = %d, registerLatency = %016llx, registerLatencyFP = %016llx \n",
+		//		num_instructions / static_cast<double>(last_used_slot / WORKERS_PER_HASH + 1),
 		//		num_slots_used / static_cast<double>(last_used_slot / WORKERS_PER_HASH + 1),
+		//		num_instructions,
 		//		num_slots_used,
 		//		last_used_slot,
-		//		registerLatency
+		//		registerLatency,
+		//		registerLatencyFP
 		//	);
 
 		//	for (int j = 0; j < RANDOMX_PROGRAM_SIZE; ++j)
