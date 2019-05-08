@@ -46,7 +46,7 @@ int main(int argc, char** argv)
 		printf("Usage: RandomX_CUDA.exe --mine device_id [--validate] [--bfactor N] [--workers N]\n\n");
 		printf("device_id is 0 if you only have 1 GPU\n");
 		printf("bfactor can be 0-10, default is 0. Increase it if you get CUDA errors/driver crashes/screen lags.\n");
-		printf("workers can be 2,4,8, default is 4. Choose the value that gives you the best hashrate (it's usually 4 or 8).\n\n");
+		printf("workers can be 2,4,8, default is 8. Choose the value that gives you the best hashrate (it's usually 4 or 8).\n\n");
 		printf("Examples:\nRandomX_CUDA.exe --test 0\nRandomX_CUDA.exe --mine 0 --validate --bfactor 3 --workers 4\n");
 		return 0;
 	}
@@ -66,7 +66,7 @@ int main(int argc, char** argv)
 
 	bool validate = false;
 	int bfactor = 0;
-	int workers_per_hash = 4;
+	int workers_per_hash = 8;
 	for (int i = 0; i < argc; ++i)
 	{
 		if (strcmp(argv[i], "--validate") == 0)
