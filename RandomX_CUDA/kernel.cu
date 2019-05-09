@@ -92,7 +92,7 @@ int main(int argc, char** argv)
 				break;
 
 			default:
-				workers_per_hash = 4;
+				workers_per_hash = 8;
 			}
 		}
 	}
