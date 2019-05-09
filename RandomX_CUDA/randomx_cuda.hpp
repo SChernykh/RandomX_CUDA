@@ -1684,14 +1684,8 @@ __device__ void inner_loop(
 		const int32_t num_fp_insts = (inst >> NUM_FP_INSTS_OFFSET) & (WORKERS_PER_HASH - 1);
 		const int32_t num_insts = num_workers - num_fp_insts;
 
-		bool ip_changed = false;
-
-		bool sync_needed, fprc_changed;
-		if (ROUNDING_MODE < 0)
-		{
-			sync_needed = false;
-			fprc_changed = false;
-		}
+		bool sync_needed = false;
+		uint32_t opcode = 0;
 
 		if (sub <= num_workers)
 		{
@@ -1705,7 +1699,7 @@ __device__ void inner_loop(
 
 			asm("// INSTRUCTION DECODING BEGIN");
 
-			const uint32_t opcode = (inst >> OPCODE_OFFSET) & 31;
+			opcode = (inst >> OPCODE_OFFSET) & 31;
 			const uint32_t location = (inst >> LOC_OFFSET) & 3;
 
 			const uint32_t reg_size_shift = is_fp ? 4 : 3;
@@ -1732,6 +1726,7 @@ __device__ void inner_loop(
 
 			asm("// INSTRUCTION DECODING END");
 
+			const bool is_read = (opcode != 10);
 			if (location)
 			{
 				asm("// SCRATCHPAD ACCESS BEGIN");
@@ -1740,7 +1735,6 @@ __device__ void inner_loop(
 				asm("bfe.u32 %0, %1, 21, 5;" : "=r"(loc_shift) : "r"(imm.x));
 				const uint32_t mask = 0xFFFFFFFFU >> loc_shift;
 
-				const bool is_read = (opcode != 10);
 				uint32_t addr = is_read ? ((loc_shift == LOC_L3) ? 0 : static_cast<uint32_t>(src)) : static_cast<uint32_t>(dst);
 				addr += static_cast<int32_t>(imm.x);
 				addr &= mask;
@@ -1758,7 +1752,7 @@ __device__ void inner_loop(
 				asm("// SCRATCHPAD ACCESS END");
 			}
 
-			if (opcode != 10)
+			if (is_read)
 			{
 				asm("// EXECUTION BEGIN");
 
@@ -1801,9 +1795,7 @@ __device__ void inner_loop(
 					{
 						ip = (static_cast<int32_t>(imm.y) >> 5);
 						ip -= num_insts;
-						ip_changed = true;
-						if (ROUNDING_MODE < 0)
-							sync_needed = true;
+						sync_needed = true;
 					}
 					asm("// <------ CBRANCH (16/256)");
 				}
@@ -1865,8 +1857,7 @@ __device__ void inner_loop(
 				{
 					asm("// CFROUND (1/256) ------>");
 					const uint32_t new_fprc = ((src >> imm_offset) | (src << (64 - imm_offset))) & 3;
-					fprc_changed = new_fprc != fprc;
-					sync_needed |= fprc_changed;
+					if (new_fprc != fprc) sync_needed = true;
 					fprc = new_fprc;
 					asm("// <------ CFROUND (1/256)");
 				}
@@ -1882,10 +1873,9 @@ __device__ void inner_loop(
 		{
 			asm("// SYNCHRONIZATION OF INSTRUCTION POINTER AND ROUNDING MODE BEGIN");
 
-			// __ballot_sync call will be skipped and removed entirely by the compiler if ROUNDING_MODE >= 0 ("||" operator uses short-circuit evaluation in C++)
-			if ((ROUNDING_MODE >= 0) || __ballot_sync(workers_mask, sync_needed))
+			if (__ballot_sync(workers_mask, sync_needed))
 			{
-				int mask = __ballot_sync(workers_mask, ip_changed);
+				int mask = __ballot_sync(workers_mask, opcode == 9);
 				if (mask)
 				{
 					int lane;
@@ -1895,7 +1885,7 @@ __device__ void inner_loop(
 
 				if (ROUNDING_MODE < 0)
 				{
-					mask = __ballot_sync(workers_mask, fprc_changed);
+					mask = __ballot_sync(workers_mask, opcode == 16);
 					if (mask)
 					{
 						int lane;
