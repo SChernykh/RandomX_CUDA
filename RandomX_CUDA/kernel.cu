@@ -36,17 +36,18 @@ along with RandomX CUDA.  If not, see<http://www.gnu.org/licenses/>.
 #include "aes_cuda.hpp"
 #include "randomx_cuda.hpp"
 
-bool test_mining(bool validate, int bfactor, int workers_per_hash);
+bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t start_nonce);
 void tests();
 
 int main(int argc, char** argv)
 {
 	if (argc < 3)
 	{
-		printf("Usage: RandomX_CUDA.exe --mine device_id [--validate] [--bfactor N] [--workers N]\n\n");
+		printf("Usage: RandomX_CUDA.exe --mine device_id [--validate] [--bfactor N] [--workers N] [--nonce N]\n\n");
 		printf("device_id is 0 if you only have 1 GPU\n");
 		printf("bfactor can be 0-10, default is 0. Increase it if you get CUDA errors/driver crashes/screen lags.\n");
 		printf("workers can be 2,4,8, default is 8. Choose the value that gives you the best hashrate (it's usually 4 or 8).\n\n");
+		printf("nonce can be any integer >= 0, default is 0. Mining will start from this nonce.\n\n");
 		printf("Examples:\nRandomX_CUDA.exe --test 0\nRandomX_CUDA.exe --mine 0 --validate --bfactor 3 --workers 4\n");
 		return 0;
 	}
@@ -67,6 +68,7 @@ int main(int argc, char** argv)
 	bool validate = false;
 	int bfactor = 0;
 	int workers_per_hash = 8;
+	uint32_t start_nonce = 0;
 	for (int i = 0; i < argc; ++i)
 	{
 		if (strcmp(argv[i], "--validate") == 0)
@@ -95,10 +97,15 @@ int main(int argc, char** argv)
 				workers_per_hash = 8;
 			}
 		}
+
+		if ((strcmp(argv[i], "--nonce") == 0) && (i + 1 < argc))
+		{
+			start_nonce = atoi(argv[i + 1]);
+		}
 	}
 
 	if (strcmp(argv[1], "--mine") == 0)
-		test_mining(validate, bfactor, workers_per_hash);
+		test_mining(validate, bfactor, workers_per_hash, start_nonce);
 	else if (strcmp(argv[1], "--test") == 0)
 		tests();
 
@@ -140,9 +147,9 @@ private:
 	void* p;
 };
 
-bool test_mining(bool validate, int bfactor, int workers_per_hash)
+bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t start_nonce)
 {
-	printf("Testing mining: CPU validation is %s, bfactor is %d, %d workers per hash\n", validate ? "ON" : "OFF", bfactor, workers_per_hash);
+	printf("Testing mining: CPU validation is %s, bfactor is %d, %d workers per hash, start nonce %u\n", validate ? "ON" : "OFF", bfactor, workers_per_hash, start_nonce);
 
 	cudaError_t cudaStatus;
 
@@ -309,7 +316,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash)
 	std::atomic<uint32_t> nonce_counter;
 	bool cpu_limited = false;
 
-	for (uint32_t nonce = 0, k = 0; nonce < 0xFFFFFFFFUL; nonce += batch_size, ++k)
+	for (uint32_t nonce = start_nonce, k = 0; nonce < 0xFFFFFFFFUL; nonce += batch_size, ++k)
 	{
 		auto validation_thread = [&nonce_counter, myDataset, &hashes_check, batch_size, nonce]() {
 			randomx_vm *myMachine = randomx_create_vm((randomx_flags)(RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_LARGE_PAGES), nullptr, myDataset);
@@ -351,9 +358,14 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash)
 			const double num_vm_cycles = static_cast<uint32_t>(data);
 			const double num_slots_used = static_cast<uint32_t>(data >> 32);
 			if (validate)
-				printf("%u hashes validated successfully, IPC %.4f, WPC %.4f, %.0f h/s%s    \r", nonce, nonce * RANDOMX_PROGRAM_SIZE * RANDOMX_PROGRAM_COUNT / num_vm_cycles, num_slots_used / num_vm_cycles, batch_size / dt, cpu_limited ? ", limited by CPU" : "                ");
+			{
+				const uint32_t n = nonce - start_nonce;
+				printf("%u hashes validated successfully, IPC %.4f, WPC %.4f, %.0f h/s%s    \r", n, n * RANDOMX_PROGRAM_SIZE * RANDOMX_PROGRAM_COUNT / num_vm_cycles, num_slots_used / num_vm_cycles, batch_size / dt, cpu_limited ? ", limited by CPU" : "                ");
+			}
 			else
+			{
 				printf("%.0f h/s\t\r", batch_size / dt);
+			}
 		}
 		prev_time = cur_time;
 
