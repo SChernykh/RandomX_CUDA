@@ -1134,7 +1134,8 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 		//	printf("\n\n");
 		//}
 
-		atomicAdd((uint64_t*) num_vm_cycles, static_cast<uint64_t>((last_used_slot / WORKERS_PER_HASH) + 1) + (static_cast<uint64_t>(num_slots_used) << 32));
+		atomicAdd((uint32_t*) num_vm_cycles, (last_used_slot / WORKERS_PER_HASH) + 1);
+		atomicAdd((uint32_t*)(num_vm_cycles) + 1, num_slots_used);
 
 		uint32_t ma = static_cast<uint32_t>(entropy[8]) & CacheLineAlignMask;
 		uint32_t mx = static_cast<uint32_t>(entropy[10]) & CacheLineAlignMask;

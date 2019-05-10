@@ -36,19 +36,20 @@ along with RandomX CUDA.  If not, see<http://www.gnu.org/licenses/>.
 #include "aes_cuda.hpp"
 #include "randomx_cuda.hpp"
 
-bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t start_nonce);
+bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t start_nonce, uint32_t intensity);
 void tests();
 
 int main(int argc, char** argv)
 {
 	if (argc < 3)
 	{
-		printf("Usage: RandomX_CUDA.exe --mine device_id [--validate] [--bfactor N] [--workers N] [--nonce N]\n\n");
+		printf("Usage: RandomX_CUDA.exe --mine device_id [--validate] [--bfactor N] [--workers N] [--nonce N] [--intensity N]\n\n");
 		printf("device_id is 0 if you only have 1 GPU\n");
 		printf("bfactor can be 0-10, default is 0. Increase it if you get CUDA errors/driver crashes/screen lags.\n");
 		printf("workers can be 2,4,8, default is 8. Choose the value that gives you the best hashrate (it's usually 4 or 8).\n\n");
 		printf("nonce can be any integer >= 0, default is 0. Mining will start from this nonce.\n\n");
-		printf("Examples:\nRandomX_CUDA.exe --test 0\nRandomX_CUDA.exe --mine 0 --validate --bfactor 3 --workers 4\n");
+		printf("intensity is a number of scratchpads to allocate, if it's not set then as many as possible will be allocated.\n\n");
+		printf("Examples:\nRandomX_CUDA.exe --test 0\nRandomX_CUDA.exe --mine 0 --validate --bfactor 3 --workers 8 --intensity 1280\n");
 		return 0;
 	}
 
@@ -57,7 +58,7 @@ int main(int argc, char** argv)
 	cudaError_t cudaStatus = cudaSetDevice(device_id);
 	if (cudaStatus != cudaSuccess)
 	{
-		fprintf(stderr, "cudaSetDevice failed! Do you have a CUDA-capable GPU installed?");
+		fprintf(stderr, "cudaSetDevice failed! Do you have a CUDA-capable GPU installed?\n");
 		return 1;
 	}
 
@@ -69,6 +70,7 @@ int main(int argc, char** argv)
 	int bfactor = 0;
 	int workers_per_hash = 8;
 	uint32_t start_nonce = 0;
+	uint32_t intensity = 0;
 	for (int i = 0; i < argc; ++i)
 	{
 		if (strcmp(argv[i], "--validate") == 0)
@@ -102,16 +104,21 @@ int main(int argc, char** argv)
 		{
 			start_nonce = atoi(argv[i + 1]);
 		}
+
+		if ((strcmp(argv[i], "--intensity") == 0) && (i + 1 < argc))
+		{
+			intensity = atoi(argv[i + 1]);
+		}
 	}
 
 	if (strcmp(argv[1], "--mine") == 0)
-		test_mining(validate, bfactor, workers_per_hash, start_nonce);
+		test_mining(validate, bfactor, workers_per_hash, start_nonce, intensity);
 	else if (strcmp(argv[1], "--test") == 0)
 		tests();
 
 	cudaStatus = cudaDeviceReset();
 	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaDeviceReset failed!");
+		fprintf(stderr, "cudaDeviceReset failed!\n");
 		return 1;
 	}
 
@@ -147,9 +154,9 @@ private:
 	void* p;
 };
 
-bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t start_nonce)
+bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t start_nonce, uint32_t intensity)
 {
-	printf("Testing mining: CPU validation is %s, bfactor is %d, %d workers per hash, start nonce %u\n", validate ? "ON" : "OFF", bfactor, workers_per_hash, start_nonce);
+	printf("Testing mining: CPU validation is %s, bfactor is %d, %d workers per hash, start nonce %u, intensity %u\n", validate ? "ON" : "OFF", bfactor, workers_per_hash, start_nonce, intensity);
 
 	cudaError_t cudaStatus;
 
@@ -159,7 +166,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t star
 		cudaStatus = cudaMemGetInfo(&free_mem, &total_mem);
 		if (cudaStatus != cudaSuccess)
 		{
-			fprintf(stderr, "Failed to get free memory info!");
+			fprintf(stderr, "Failed to get free memory info!\n");
 			return false;
 		}
 	}
@@ -171,16 +178,17 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t star
 	const size_t dataset_size = randomx_dataset_item_count() * RANDOMX_DATASET_ITEM_SIZE;
 	if (free_mem <= dataset_size + (32U * SCRATCHPAD_SIZE) + (64U << 20))
 	{
-		fprintf(stderr, "Not enough free GPU memory!");
+		fprintf(stderr, "Not enough free GPU memory!\n");
 		return false;
 	}
 
-	const uint32_t batch_size = static_cast<uint32_t>((((free_mem - dataset_size - (64U << 20)) / SCRATCHPAD_SIZE) / 32) * 32);
+	uint32_t batch_size = (intensity >= 32) ? intensity : ((free_mem - dataset_size - (64U << 20)) / SCRATCHPAD_SIZE);
+	batch_size = static_cast<uint32_t>(batch_size / 32) * 32;
 
 	GPUPtr dataset_gpu(dataset_size);
 	if (!dataset_gpu)
 	{
-		fprintf(stderr, "Failed to allocate GPU memory for dataset!");
+		fprintf(stderr, "Failed to allocate GPU memory for dataset!\n");
 		return false;
 	}
 
@@ -189,6 +197,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t star
 	printf("Initializing dataset...");
 
 	randomx_dataset *myDataset;
+	bool large_pages_available = true;
 	{
 		const char mySeed[] = "RandomX example seed";
 
@@ -196,13 +205,17 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t star
 		randomx_init_cache(myCache, mySeed, sizeof mySeed);
 		myDataset = randomx_alloc_dataset(RANDOMX_FLAG_LARGE_PAGES);
 		if (!myDataset)
+		{
+			printf("\nCouldn't allocate dataset using large pages\n");
 			myDataset = randomx_alloc_dataset(RANDOMX_FLAG_DEFAULT);
+			large_pages_available = false;
+		}
 
-		time_point<steady_clock> t1 = high_resolution_clock::now();
+		auto t1 = high_resolution_clock::now();
 
 		std::vector<std::thread> threads;
 		for (uint32_t i = 0, n = std::thread::hardware_concurrency(); i < n; ++i)
-			threads.emplace_back(randomx_init_dataset, myDataset, myCache, (i * randomx_dataset_item_count()) / n, ((i + 1) * randomx_dataset_item_count()) / n - (i * randomx_dataset_item_count()) / n);
+			threads.emplace_back([myDataset, myCache, i, n](){ randomx_init_dataset(myDataset, myCache, (i * randomx_dataset_item_count()) / n, ((i + 1) * randomx_dataset_item_count()) / n - (i * randomx_dataset_item_count()) / n); });
 
 		for (auto& t : threads)
 			t.join();
@@ -221,7 +234,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t star
 	GPUPtr scratchpads_gpu(batch_size * SCRATCHPAD_SIZE);
 	if (!scratchpads_gpu)
 	{
-		fprintf(stderr, "Failed to allocate GPU memory for scratchpads!");
+		fprintf(stderr, "Failed to allocate GPU memory for scratchpads!\n");
 		return false;
 	}
 
@@ -230,35 +243,35 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t star
 	GPUPtr hashes_gpu(batch_size * HASH_SIZE);
 	if (!hashes_gpu)
 	{
-		fprintf(stderr, "Failed to allocate GPU memory for hashes!");
+		fprintf(stderr, "Failed to allocate GPU memory for hashes!\n");
 		return false;
 	}
 
 	GPUPtr entropy_gpu(batch_size * ENTROPY_SIZE);
 	if (!entropy_gpu)
 	{
-		fprintf(stderr, "Failed to allocate GPU memory for programs!");
+		fprintf(stderr, "Failed to allocate GPU memory for programs!\n");
 		return false;
 	}
 
 	GPUPtr vm_states_gpu(batch_size * VM_STATE_SIZE);
 	if (!vm_states_gpu)
 	{
-		fprintf(stderr, "Failed to allocate GPU memory for VM states!");
+		fprintf(stderr, "Failed to allocate GPU memory for VM states!\n");
 		return false;
 	}
 
 	GPUPtr rounding_gpu(batch_size * sizeof(uint32_t));
 	if (!rounding_gpu)
 	{
-		fprintf(stderr, "Failed to allocate GPU memory for VM rounding data!");
+		fprintf(stderr, "Failed to allocate GPU memory for VM rounding data!\n");
 		return false;
 	}
 
 	GPUPtr num_vm_cycles_gpu(sizeof(uint64_t));
 	if (!num_vm_cycles_gpu)
 	{
-		fprintf(stderr, "Failed to allocate GPU memory for VM num cyles data!");
+		fprintf(stderr, "Failed to allocate GPU memory for VM num cyles data!\n");
 		return false;
 	}
 
@@ -267,7 +280,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t star
 	GPUPtr blockTemplate_gpu(sizeof(blockTemplate));
 	if (!blockTemplate_gpu)
 	{
-		fprintf(stderr, "Failed to allocate GPU memory for block template!");
+		fprintf(stderr, "Failed to allocate GPU memory for block template!\n");
 		return false;
 	}
 
@@ -280,33 +293,33 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t star
 	cudaStatus = cudaMemGetInfo(&free_mem, &total_mem);
 	if (cudaStatus != cudaSuccess)
 	{
-		fprintf(stderr, "Failed to get free memory info!");
+		fprintf(stderr, "Failed to get free memory info!\n");
 		return false;
 	}
 
 	printf("%zu MB free GPU memory left\n", free_mem >> 20);
 
-	const void* init_vm_list[] = { init_vm<2>, init_vm<4>, init_vm<8> };
-	const void* execute_vm_list[] = { execute_vm<2>, execute_vm<4>, execute_vm<8> };
+	const void* init_vm_list[] = { (const void*) init_vm<2>, (const void*) init_vm<4>, (const void*) init_vm<8> };
+	const void* execute_vm_list[] = { (const void*) execute_vm<2>, (const void*) execute_vm<4>, (const void*) execute_vm<8> };
 
 	for (int i = 0; i < 3; ++i)
 	{
 		cudaStatus = cudaFuncSetCacheConfig(init_vm_list[i], cudaFuncCachePreferShared);
 		if (cudaStatus != cudaSuccess)
 		{
-			fprintf(stderr, "Failed to set cache config for init_vm<%d>!", 1 << i);
+			fprintf(stderr, "Failed to set cache config for init_vm<%d>!\n", 1 << (i + 1));
 			return false;
 		}
 
 		cudaStatus = cudaFuncSetCacheConfig(execute_vm_list[i], cudaFuncCachePreferShared);
 		if (cudaStatus != cudaSuccess)
 		{
-			fprintf(stderr, "Failed to set cache config for execute_vm<%d>!", 1 << i);
+			fprintf(stderr, "Failed to set cache config for execute_vm<%d>!\n", 1 << (i + 1));
 			return false;
 		}
 	}
 
-	time_point<steady_clock> prev_time;
+	auto prev_time = high_resolution_clock::now();
 
 	std::vector<uint8_t> hashes, hashes_check;
 	hashes.resize(batch_size * 32);
@@ -318,8 +331,8 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t star
 
 	for (uint32_t nonce = start_nonce, k = 0; nonce < 0xFFFFFFFFUL; nonce += batch_size, ++k)
 	{
-		auto validation_thread = [&nonce_counter, myDataset, &hashes_check, batch_size, nonce]() {
-			randomx_vm *myMachine = randomx_create_vm((randomx_flags)(RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_LARGE_PAGES), nullptr, myDataset);
+		auto validation_thread = [&nonce_counter, myDataset, &hashes_check, batch_size, nonce, large_pages_available]() {
+			randomx_vm *myMachine = randomx_create_vm((randomx_flags)(RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES | (large_pages_available ? RANDOMX_FLAG_LARGE_PAGES : 0)), nullptr, myDataset);
 
 			uint8_t buf[sizeof(blockTemplate)];
 			memcpy(buf, blockTemplate, sizeof(buf));
@@ -348,7 +361,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t star
 				threads.emplace_back(validation_thread);
 		}
 
-		time_point<steady_clock> cur_time = high_resolution_clock::now();
+		auto cur_time = high_resolution_clock::now();
 		if (k > 0)
 		{
 			const double dt = duration_cast<nanoseconds>(cur_time - prev_time).count() / 1e9;
@@ -360,7 +373,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t star
 			if (validate)
 			{
 				const uint32_t n = nonce - start_nonce;
-				printf("%u hashes validated successfully, IPC %.4f, WPC %.4f, %.0f h/s%s    \r", n, n * RANDOMX_PROGRAM_SIZE * RANDOMX_PROGRAM_COUNT / num_vm_cycles, num_slots_used / num_vm_cycles, batch_size / dt, cpu_limited ? ", limited by CPU" : "                ");
+				printf("%u hashes validated successfully, IPC %.4f, WPC %.4f, %.0f h/s%s\n", n, n * RANDOMX_PROGRAM_SIZE * RANDOMX_PROGRAM_COUNT / num_vm_cycles, num_slots_used / num_vm_cycles, batch_size / dt, cpu_limited ? ", limited by CPU" : "                ");
 			}
 			else
 			{
@@ -385,7 +398,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t star
 
 		cudaStatus = cudaMemset(rounding_gpu, 0, batch_size * sizeof(uint32_t));
 		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaMemset failed!");
+			fprintf(stderr, "cudaMemset failed!\n");
 			return false;
 		}
 
@@ -503,19 +516,19 @@ void tests()
 
 	GPUPtr hash_gpu(sizeof(hash));
 	if (!hash_gpu) {
-		fprintf(stderr, "cudaMalloc failed!");
+		fprintf(stderr, "cudaMalloc failed!\n");
 		return;
 	}
 
 	GPUPtr block_template_gpu(sizeof(blockTemplate));
 	if (!block_template_gpu) {
-		fprintf(stderr, "cudaMalloc failed!");
+		fprintf(stderr, "cudaMalloc failed!\n");
 		return;
 	}
 
 	GPUPtr nonce_gpu(sizeof(uint64_t));
 	if (!nonce_gpu) {
-		fprintf(stderr, "cudaMalloc failed!");
+		fprintf(stderr, "cudaMalloc failed!\n");
 		return;
 	}
 
@@ -526,7 +539,7 @@ void tests()
 
 	GPUPtr scratchpads_gpu(SCRATCHPAD_SIZE * NUM_SCRATCHPADS_BENCH);
 	if (!scratchpads_gpu) {
-		fprintf(stderr, "cudaMalloc failed!");
+		fprintf(stderr, "cudaMalloc failed!\n");
 		return;
 	}
 
@@ -538,13 +551,13 @@ void tests()
 
 	GPUPtr registers_gpu(REGISTERS_SIZE * NUM_SCRATCHPADS_TEST);
 	if (!registers_gpu) {
-		fprintf(stderr, "cudaMalloc failed!");
+		fprintf(stderr, "cudaMalloc failed!\n");
 		return;
 	}
 
 	cudaError_t cudaStatus = cudaMemcpy(block_template_gpu, blockTemplate, sizeof(blockTemplate), cudaMemcpyHostToDevice);
 	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy failed!");
+		fprintf(stderr, "cudaMemcpy failed!\n");
 		return;
 	}
 
@@ -559,7 +572,7 @@ void tests()
 
 		cudaStatus = cudaMemcpy(&hash, hash_gpu, sizeof(hash), cudaMemcpyDeviceToHost);
 		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaMemcpy failed!");
+			fprintf(stderr, "cudaMemcpy failed!\n");
 			return;
 		}
 
@@ -571,7 +584,7 @@ void tests()
 
 		if (memcmp(hash, hash2, sizeof(hash)) != 0)
 		{
-			fprintf(stderr, "blake2b_initial_hash test failed!");
+			fprintf(stderr, "blake2b_initial_hash test failed!\n");
 			return;
 		}
 
@@ -589,13 +602,13 @@ void tests()
 
 		cudaStatus = cudaMemcpy(&hash, hash_gpu, sizeof(hash), cudaMemcpyDeviceToHost);
 		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaMemcpy failed!");
+			fprintf(stderr, "cudaMemcpy failed!\n");
 			return;
 		}
 
 		cudaStatus = cudaMemcpy(scratchpads.data(), scratchpads_gpu, SCRATCHPAD_SIZE * NUM_SCRATCHPADS_TEST, cudaMemcpyDeviceToHost);
 		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaMemcpy failed!");
+			fprintf(stderr, "cudaMemcpy failed!\n");
 			return;
 		}
 
@@ -605,7 +618,7 @@ void tests()
 
 			if (memcmp(hash + i * 8, hash2 + i * 8, 64) != 0)
 			{
-				fprintf(stderr, "fillAes1Rx4 test (hash) failed!");
+				fprintf(stderr, "fillAes1Rx4 test (hash) failed!\n");
 				return;
 			}
 
@@ -615,7 +628,7 @@ void tests()
 			{
 				if (memcmp(p1 + j * NUM_SCRATCHPADS_TEST, p2 + j, 64) != 0)
 				{
-					fprintf(stderr, "fillAes1Rx4 test (scratchpad) failed!");
+					fprintf(stderr, "fillAes1Rx4 test (scratchpad) failed!\n");
 					return;
 				}
 			}
@@ -635,13 +648,13 @@ void tests()
 
 		cudaStatus = cudaMemcpy(hash, hash_gpu, sizeof(hash), cudaMemcpyDeviceToHost);
 		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaMemcpy failed!");
+			fprintf(stderr, "cudaMemcpy failed!\n");
 			return;
 		}
 
 		cudaStatus = cudaMemcpy(programs.data(), programs_gpu, ENTROPY_SIZE * NUM_SCRATCHPADS_TEST, cudaMemcpyDeviceToHost);
 		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaMemcpy failed!");
+			fprintf(stderr, "cudaMemcpy failed!\n");
 			return;
 		}
 
@@ -651,13 +664,13 @@ void tests()
 
 			if (memcmp(hash + i * 8, hash2 + i * 8, 64) != 0)
 			{
-				fprintf(stderr, "fillAes1Rx4 test (hash) failed!");
+				fprintf(stderr, "fillAes1Rx4 test (hash) failed!\n");
 				return;
 			}
 
 			if (memcmp(programs.data() + i * ENTROPY_SIZE, programs.data() + (NUM_SCRATCHPADS_TEST + i) * ENTROPY_SIZE, ENTROPY_SIZE) != 0)
 			{
-				fprintf(stderr, "fillAes1Rx4 test (program) failed!");
+				fprintf(stderr, "fillAes1Rx4 test (program) failed!\n");
 				return;
 			}
 		}
@@ -676,7 +689,7 @@ void tests()
 
 		cudaStatus = cudaMemcpy(registers, registers_gpu, sizeof(registers), cudaMemcpyDeviceToHost);
 		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaMemcpy failed!");
+			fprintf(stderr, "cudaMemcpy failed!\n");
 			return;
 		}
 
@@ -686,7 +699,7 @@ void tests()
 
 			if (memcmp(registers + i * REGISTERS_SIZE, registers2 + i * REGISTERS_SIZE, REGISTERS_SIZE) != 0)
 			{
-				fprintf(stderr, "hashAes1Rx4 test failed!");
+				fprintf(stderr, "hashAes1Rx4 test failed!\n");
 				return;
 			}
 		}
@@ -704,7 +717,7 @@ void tests()
 
 		cudaStatus = cudaMemcpy(&hash, hash_gpu, sizeof(hash), cudaMemcpyDeviceToHost);
 		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaMemcpy failed!");
+			fprintf(stderr, "cudaMemcpy failed!\n");
 			return;
 		}
 
@@ -715,7 +728,7 @@ void tests()
 
 		if (memcmp(hash, hash2, NUM_SCRATCHPADS_TEST * 32) != 0)
 		{
-			fprintf(stderr, "blake2b_hash_registers (32 byte hash) test failed!");
+			fprintf(stderr, "blake2b_hash_registers (32 byte hash) test failed!\n");
 			return;
 		}
 
@@ -732,7 +745,7 @@ void tests()
 
 		cudaStatus = cudaMemcpy(&hash, hash_gpu, sizeof(hash), cudaMemcpyDeviceToHost);
 		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaMemcpy failed!");
+			fprintf(stderr, "cudaMemcpy failed!\n");
 			return;
 		}
 
@@ -743,14 +756,14 @@ void tests()
 
 		if (memcmp(hash, hash2, NUM_SCRATCHPADS_TEST * 64) != 0)
 		{
-			fprintf(stderr, "blake2b_hash_registers (64 byte hash) test failed!");
+			fprintf(stderr, "blake2b_hash_registers (64 byte hash) test failed!\n");
 			return;
 		}
 
 		printf("blake2b_hash_registers (64 byte hash) test passed\n");
 	}
 
-	time_point<steady_clock> start_time = high_resolution_clock::now();
+	auto start_time = high_resolution_clock::now();
 
 	for (int i = 0; i < 100; ++i)
 	{
@@ -814,7 +827,7 @@ void tests()
 
 	cudaStatus = cudaMemcpy(block_template_gpu, blockTemplate, sizeof(blockTemplate), cudaMemcpyHostToDevice);
 	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy failed!");
+		fprintf(stderr, "cudaMemcpy failed!\n");
 		return;
 	}
 
@@ -822,7 +835,7 @@ void tests()
 
 	for (uint64_t start_nonce = 0; start_nonce < BLAKE2B_STEP * 100; start_nonce += BLAKE2B_STEP)
 	{
-		printf("Benchmarking blake2b_512_single_block %llu/100", (start_nonce + BLAKE2B_STEP) / BLAKE2B_STEP);
+		printf("Benchmarking blake2b_512_single_block %zu/100", (start_nonce + BLAKE2B_STEP) / BLAKE2B_STEP);
 		if (start_nonce > 0)
 		{
 			const double dt = duration_cast<nanoseconds>(high_resolution_clock::now() - start_time).count() / 1e9;
@@ -832,7 +845,7 @@ void tests()
 
 		cudaStatus = cudaMemset(nonce_gpu, 0, sizeof(uint64_t));
 		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaMemset failed!");
+			fprintf(stderr, "cudaMemset failed!\n");
 			return;
 		}
 
@@ -854,7 +867,7 @@ void tests()
 		uint64_t nonce;
 		cudaStatus = cudaMemcpy(&nonce, nonce_gpu, sizeof(nonce), cudaMemcpyDeviceToHost);
 		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaMemcpy failed!");
+			fprintf(stderr, "cudaMemcpy failed!\n");
 			return;
 		}
 
@@ -862,7 +875,7 @@ void tests()
 		{
 			*(uint64_t*)(blockTemplate) = nonce;
 			blake2b(hash, 64, blockTemplate, sizeof(blockTemplate), nullptr, 0);
-			printf("nonce = %llu, hash[7] = %016llx                  \n", nonce, hash[7]);
+			printf("nonce = %zu, hash[7] = %016zx                  \n", nonce, hash[7]);
 		}
 	}
 	printf("\n");
@@ -871,7 +884,7 @@ void tests()
 
 	for (uint64_t start_nonce = 0; start_nonce < BLAKE2B_STEP * 100; start_nonce += BLAKE2B_STEP)
 	{
-		printf("Benchmarking blake2b_512_double_block %llu/100", (start_nonce + BLAKE2B_STEP) / BLAKE2B_STEP);
+		printf("Benchmarking blake2b_512_double_block %zu/100", (start_nonce + BLAKE2B_STEP) / BLAKE2B_STEP);
 		if (start_nonce > 0)
 		{
 			const double dt = duration_cast<nanoseconds>(high_resolution_clock::now() - start_time).count() / 1e9;
@@ -882,7 +895,7 @@ void tests()
 		const uint64_t zero = 0;
 		cudaStatus = cudaMemcpy(nonce_gpu, &zero, sizeof(zero), cudaMemcpyHostToDevice);
 		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaMemcpy failed!");
+			fprintf(stderr, "cudaMemcpy failed!\n");
 			return;
 		}
 
@@ -904,7 +917,7 @@ void tests()
 		uint64_t nonce;
 		cudaStatus = cudaMemcpy(&nonce, nonce_gpu, sizeof(nonce), cudaMemcpyDeviceToHost);
 		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaMemcpy failed!");
+			fprintf(stderr, "cudaMemcpy failed!\n");
 			return;
 		}
 
@@ -912,7 +925,7 @@ void tests()
 		{
 			*(uint64_t*)(registers) = nonce;
 			blake2b(hash, 64, registers, REGISTERS_SIZE, nullptr, 0);
-			printf("nonce = %llu, hash[7] = %016llx                  \n", nonce, hash[7]);
+			printf("nonce = %zu, hash[7] = %016zx                  \n", nonce, hash[7]);
 		}
 	}
 	printf("\n");
