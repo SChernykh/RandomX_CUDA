@@ -19,6 +19,8 @@ GTX 1660 Ti (2070/13760 MHz)|620|577 (102 W)|93.1%
 
 ```
 sudo apt install build-essential git nvidia-cuda-toolkit
+git clone --recursive https://github.com/SChernykh/RandomX_CUDA/
+cd RandomX_CUDA
 make
 ```
 
