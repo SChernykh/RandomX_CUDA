@@ -113,11 +113,11 @@ __device__ void test_memory_access(uint64_t* r, uint8_t* scratchpad, uint32_t ba
 // Bits 3-5: src (0-7)
 // Bits 6-13: imm32/64 offset (in DWORDs, 0-191)
 // Bits 14-15: src location (register, L1, L2, L3)
-// Bits 16-17: src shift (0-3)
+// Bits 16-17: src shift (0-3), ADD/MUL switch for FMA instruction
 // Bit 18: src=imm32
 // Bit 19: src=imm64
 // Bit 20: src = -src
-// Bits 21-25: opcode (add_rs, add, mul, umul_hi, imul_hi, neg, xor, ror, swap, cbranch, store, fswap, fadd, fmul, fsqrt, fdiv, cfround)
+// Bits 21-25: opcode (add_rs, add, mul, umul_hi, imul_hi, neg, xor, ror, swap, cbranch, store, fswap, fma, fsqrt, fdiv, cfround)
 // Bits 26-28: how many parallel instructions to run starting with this one (1-8)
 // Bits 29-31: how many of them are FP instructions (0-4)
 //
@@ -1487,7 +1487,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 
 			if (opcode < RANDOMX_FREQ_FMUL_R)
 			{
-				inst.x = (((dst % randomx::RegisterCountFlt) + randomx::RegisterCountFlt) << DST_OFFSET) | ((src % randomx::RegisterCountFlt) << (SRC_OFFSET + 1)) | (13 << OPCODE_OFFSET);
+				inst.x = (((dst % randomx::RegisterCountFlt) + randomx::RegisterCountFlt) << DST_OFFSET) | ((src % randomx::RegisterCountFlt) << (SRC_OFFSET + 1)) | (1 << SHIFT_OFFSET) | (12 << OPCODE_OFFSET);
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
@@ -1585,20 +1585,14 @@ __device__ void load_buffer(T (&dst_buf)[N], const void* src_buf)
 	}
 }
 
-template<int> __device__ double add_rnd(double a, double b, uint32_t fprc);
-template<int> __device__ double mul_rnd(double a, double b, uint32_t fprc);
+template<int> __device__ double fma_rnd(double a, double b, double c, uint32_t fprc);
 template<int> __device__ double div_rnd(double a, double b, uint32_t fprc);
 template<int> __device__ double sqrt_rnd(double a, uint32_t fprc);
 
-template<> __device__ double add_rnd<0>(double a, double b, uint32_t) { return __dadd_rn(a, b); }
-template<> __device__ double add_rnd<1>(double a, double b, uint32_t) { return __dadd_rd(a, b); }
-template<> __device__ double add_rnd<2>(double a, double b, uint32_t) { return __dadd_ru(a, b); }
-template<> __device__ double add_rnd<3>(double a, double b, uint32_t) { return __dadd_rz(a, b); }
-
-template<> __device__ double mul_rnd<0>(double a, double b, uint32_t) { return __dmul_rn(a, b); }
-template<> __device__ double mul_rnd<1>(double a, double b, uint32_t) { return __dmul_rd(a, b); }
-template<> __device__ double mul_rnd<2>(double a, double b, uint32_t) { return __dmul_ru(a, b); }
-template<> __device__ double mul_rnd<3>(double a, double b, uint32_t) { return __dmul_rz(a, b); }
+template<> __device__ double fma_rnd<0>(double a, double b, double c, uint32_t) { return __fma_rn(a, b, c); }
+template<> __device__ double fma_rnd<1>(double a, double b, double c, uint32_t) { return __fma_rd(a, b, c); }
+template<> __device__ double fma_rnd<2>(double a, double b, double c, uint32_t) { return __fma_ru(a, b, c); }
+template<> __device__ double fma_rnd<3>(double a, double b, double c, uint32_t) { return __fma_rz(a, b, c); }
 
 template<> __device__ double div_rnd<0>(double a, double b, uint32_t) { return __ddiv_rn(a, b); }
 template<> __device__ double div_rnd<1>(double a, double b, uint32_t) { return __ddiv_rd(a, b); }
@@ -1610,28 +1604,16 @@ template<> __device__ double sqrt_rnd<1>(double a, uint32_t) { return __dsqrt_rd
 template<> __device__ double sqrt_rnd<2>(double a, uint32_t) { return __dsqrt_ru(a); }
 template<> __device__ double sqrt_rnd<3>(double a, uint32_t) { return __dsqrt_rz(a); }
 
-template<> __device__ double add_rnd<-1>(double a, double b, uint32_t fprc)
+template<> __device__ double fma_rnd<-1>(double a, double b, double c, uint32_t fprc)
 {
 	if (fprc == 0)
-		return add_rnd<0>(a, b, 0);
+		return fma_rnd<0>(a, b, c, 0);
 	else if (fprc == 1)
-		return add_rnd<1>(a, b, 1);
+		return fma_rnd<1>(a, b, c, 1);
 	else if (fprc == 2)
-		return add_rnd<2>(a, b, 2);
+		return fma_rnd<2>(a, b, c, 2);
 	else
-		return add_rnd<3>(a, b, 3);
-}
-
-template<> __device__ double mul_rnd<-1>(double a, double b, uint32_t fprc)
-{
-	if (fprc == 0)
-		return mul_rnd<0>(a, b, 0);
-	else if (fprc == 1)
-		return mul_rnd<1>(a, b, 1);
-	else if (fprc == 2)
-		return mul_rnd<2>(a, b, 2);
-	else
-		return mul_rnd<3>(a, b, 3);
+		return fma_rnd<3>(a, b, c, 3);
 }
 
 template<> __device__ double div_rnd<-1>(double a, double b, uint32_t fprc)
@@ -1727,7 +1709,6 @@ __device__ void inner_loop(
 
 			asm("// INSTRUCTION DECODING END");
 
-			const bool is_read = (opcode != 10);
 			if (location)
 			{
 				asm("// SCRATCHPAD ACCESS BEGIN");
@@ -1736,6 +1717,7 @@ __device__ void inner_loop(
 				asm("bfe.u32 %0, %1, 21, 5;" : "=r"(loc_shift) : "r"(imm.x));
 				const uint32_t mask = 0xFFFFFFFFU >> loc_shift;
 
+				const bool is_read = (opcode != 10);
 				uint32_t addr = is_read ? ((loc_shift == LOC_L3) ? 0 : static_cast<uint32_t>(src)) : static_cast<uint32_t>(dst);
 				addr += static_cast<int32_t>(imm.x);
 				addr &= mask;
@@ -1746,14 +1728,18 @@ __device__ void inner_loop(
 				uint64_t* ptr = (uint64_t*)(scratchpad + offset);
 
 				if (is_read)
+				{
 					src = *ptr;
+				}
 				else
+				{
 					*ptr = src;
+					goto execution_end;
+				}
 
 				asm("// SCRATCHPAD ACCESS END");
 			}
 
-			if (is_read)
 			{
 				asm("// EXECUTION BEGIN");
 
@@ -1776,17 +1762,18 @@ __device__ void inner_loop(
 				}
 				else if (opcode == 12)
 				{
-					asm("// FADD_R, FADD_M, FSUB_R, FSUB_M (50/256) ------>");
+					asm("// FADD_R, FADD_M, FSUB_R, FSUB_M, FMUL_R (70/256) ------>");
+
 					if (location) src = bit_cast<uint64_t>(__int2double_rn(static_cast<int32_t>(src >> ((sub & 1) * 32))));
 					if (inst & (1 << NEGATIVE_SRC_OFFSET)) src ^= 0x8000000000000000ULL;
-					dst = bit_cast<uint64_t>(add_rnd<ROUNDING_MODE>(__longlong_as_double(dst), __longlong_as_double(src), fprc));
-					asm("// <------ FADD_R, FADD_M, FSUB_R, FSUB_M (50/256)");
-				}
-				else if (opcode == 13)
-				{
-					asm("// FMUL_R (20/256) ------>");
-					dst = bit_cast<uint64_t>(mul_rnd<ROUNDING_MODE>(__longlong_as_double(dst), __longlong_as_double(src), fprc));
-					asm("// <------ FMUL_R (20/256)");
+
+					const bool is_mul = (inst & (1 << SHIFT_OFFSET)) != 0;
+					const double a = __longlong_as_double(dst);
+					const double b = __longlong_as_double(src);
+
+					dst = bit_cast<uint64_t>(fma_rnd<ROUNDING_MODE>(a, is_mul ? b : 1.0, is_mul ? 0.0 : b, fprc));
+
+					asm("// <------ FADD_R, FADD_M, FSUB_R, FSUB_M, FMUL_R (70/256)");
 				}
 				else if (opcode == 9)
 				{
@@ -1871,6 +1858,7 @@ __device__ void inner_loop(
 			}
 		}
 
+		execution_end:
 		{
 			asm("// SYNCHRONIZATION OF INSTRUCTION POINTER AND ROUNDING MODE BEGIN");
 

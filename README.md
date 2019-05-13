@@ -2,13 +2,14 @@
 
 This repository contains full RandomX implementation for NVIDIA GPUs. The latest version of RandomX (as of May 7th, 2019) is supported.
 
-Note: it's only a benchmark/testing tool, not an actual miner. The code is NOT optimized to the limit yet. RandomX hashrate is expected to improve somewhat in the future.
+Note: it's only a benchmark/testing tool, not an actual miner. RandomX hashrate is expected to improve somewhat in the future thanks to further optimizations.
 
 GPUs tested so far:
 
 Model|CryptonightR H/S|RandomX H/S|Relative speed
 -----|---------------|-----------|--------------
-GTX 1660 Ti (2070/13760 MHz)|620|577 (102 W)|93.1%
+GTX 1660 Ti max overclock (2070/13760 MHz)|626 (98 W)|595 (102 W)|95.0%
+GTX 1660 Ti low power (1785/11500 MHz)|521 (70 W)|510 (70 W)|97.9%
 
 ## Building on Windows
 
