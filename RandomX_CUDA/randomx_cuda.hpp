@@ -1597,12 +1597,10 @@ template<> __device__ double fma_rnd<3>(double a, double b, double c, uint32_t) 
 template<> __device__ double div_rnd<0>(double a, double b, uint32_t) { return __ddiv_rn(a, b); }
 template<> __device__ double div_rnd<1>(double a, double b, uint32_t) { return __ddiv_rd(a, b); }
 template<> __device__ double div_rnd<2>(double a, double b, uint32_t) { return __ddiv_ru(a, b); }
-template<> __device__ double div_rnd<3>(double a, double b, uint32_t) { return __ddiv_rz(a, b); }
 
 template<> __device__ double sqrt_rnd<0>(double a, uint32_t) { return __dsqrt_rn(a); }
 template<> __device__ double sqrt_rnd<1>(double a, uint32_t) { return __dsqrt_rd(a); }
 template<> __device__ double sqrt_rnd<2>(double a, uint32_t) { return __dsqrt_ru(a); }
-template<> __device__ double sqrt_rnd<3>(double a, uint32_t) { return __dsqrt_rz(a); }
 
 template<> __device__ double fma_rnd<-1>(double a, double b, double c, uint32_t fprc)
 {
@@ -1620,24 +1618,20 @@ template<> __device__ double div_rnd<-1>(double a, double b, uint32_t fprc)
 {
 	if (fprc == 0)
 		return div_rnd<0>(a, b, 0);
-	else if (fprc == 1)
-		return div_rnd<1>(a, b, 1);
 	else if (fprc == 2)
 		return div_rnd<2>(a, b, 2);
 	else
-		return div_rnd<3>(a, b, 3);
+		return div_rnd<1>(a, b, 3);
 }
 
 template<> __device__ double sqrt_rnd<-1>(double a, uint32_t fprc)
 {
 	if (fprc == 0)
 		return sqrt_rnd<0>(a, 0);
-	else if (fprc == 1)
-		return sqrt_rnd<1>(a, 1);
 	else if (fprc == 2)
 		return sqrt_rnd<2>(a, 2);
 	else
-		return sqrt_rnd<3>(a, 3);
+		return sqrt_rnd<1>(a, 3);
 }
 
 template<int WORKERS_PER_HASH, int ROUNDING_MODE>
