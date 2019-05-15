@@ -36,20 +36,21 @@ along with RandomX CUDA.  If not, see<http://www.gnu.org/licenses/>.
 #include "aes_cuda.hpp"
 #include "randomx_cuda.hpp"
 
-bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t start_nonce, uint32_t intensity);
+bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp, uint32_t start_nonce, uint32_t intensity);
 void tests();
 
 int main(int argc, char** argv)
 {
 	if (argc < 3)
 	{
-		printf("Usage: RandomX_CUDA.exe --mine device_id [--validate] [--bfactor N] [--workers N] [--nonce N] [--intensity N]\n\n");
-		printf("device_id is 0 if you only have 1 GPU\n");
-		printf("bfactor can be 0-10, default is 0. Increase it if you get CUDA errors/driver crashes/screen lags.\n");
-		printf("workers can be 2,4,8, default is 8. Choose the value that gives you the best hashrate (it's usually 4 or 8).\n\n");
-		printf("nonce can be any integer >= 0, default is 0. Mining will start from this nonce.\n\n");
-		printf("intensity is a number of scratchpads to allocate, if it's not set then as many as possible will be allocated.\n\n");
-		printf("Examples:\nRandomX_CUDA.exe --test 0\nRandomX_CUDA.exe --mine 0 --validate --bfactor 3 --workers 8 --intensity 1280\n");
+		printf("Usage: %s --mine device_id [--validate] [--bfactor N] [--workers N] [--fast_fp] [--nonce N] [--intensity N]\n\n", argv[0]);
+		printf("device_id    0 if you have only 1 GPU\n");
+		printf("bfactor      0-10, default is 0. Increase it if you get CUDA errors/driver crashes/screen lags.\n");
+		printf("workers      2,4,8, default is 8. Choose the value that gives you the best hashrate (it's usually 4 or 8).\n");
+		printf("fast_fp      use faster, but sometimes incorrect code for floating point instructions");
+		printf("nonce        any integer >= 0, default is 0. Mining will start from this nonce.\n");
+		printf("intensity    number of scratchpads to allocate, if it's not set then as many as possible will be allocated.\n\n");
+		printf("Examples:\n%s --test 0\n%s --mine 0 --validate --bfactor 3 --workers 8 --intensity 1280\n", argv[0], argv[0]);
 		return 0;
 	}
 
@@ -71,6 +72,7 @@ int main(int argc, char** argv)
 	int workers_per_hash = 8;
 	uint32_t start_nonce = 0;
 	uint32_t intensity = 0;
+	bool fast_fp = false;
 	for (int i = 0; i < argc; ++i)
 	{
 		if (strcmp(argv[i], "--validate") == 0)
@@ -109,10 +111,15 @@ int main(int argc, char** argv)
 		{
 			intensity = atoi(argv[i + 1]);
 		}
+
+		if ((strcmp(argv[i], "--fast_fp") == 0))
+		{
+			fast_fp = true;
+		}
 	}
 
 	if (strcmp(argv[1], "--mine") == 0)
-		test_mining(validate, bfactor, workers_per_hash, start_nonce, intensity);
+		test_mining(validate, bfactor, workers_per_hash, fast_fp, start_nonce, intensity);
 	else if (strcmp(argv[1], "--test") == 0)
 		tests();
 
@@ -154,9 +161,9 @@ private:
 	void* p;
 };
 
-bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t start_nonce, uint32_t intensity)
+bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp, uint32_t start_nonce, uint32_t intensity)
 {
-	printf("Testing mining: CPU validation is %s, bfactor is %d, %d workers per hash, start nonce %u, intensity %u\n", validate ? "ON" : "OFF", bfactor, workers_per_hash, start_nonce, intensity);
+	printf("Testing mining: CPU validation is %s, bfactor is %d, %d workers per hash%s, start nonce %u, intensity %u\n", validate ? "ON" : "OFF", bfactor, workers_per_hash, fast_fp ? ", fast FP" : "", start_nonce, intensity);
 
 	cudaError_t cudaStatus;
 
@@ -182,7 +189,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t star
 		return false;
 	}
 
-	uint32_t batch_size = (intensity >= 32) ? intensity : ((free_mem - dataset_size - (64U << 20)) / SCRATCHPAD_SIZE);
+	uint32_t batch_size = (intensity >= 32) ? intensity : static_cast<uint32_t>((free_mem - dataset_size - (64U << 20)) / SCRATCHPAD_SIZE);
 	batch_size = static_cast<uint32_t>(batch_size / 32) * 32;
 
 	GPUPtr dataset_gpu(dataset_size);
@@ -299,22 +306,22 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t star
 
 	printf("%zu MB free GPU memory left\n", free_mem >> 20);
 
-	const void* init_vm_list[] = { (const void*) init_vm<2>, (const void*) init_vm<4>, (const void*) init_vm<8> };
-	const void* execute_vm_list[] = { (const void*) execute_vm<2>, (const void*) execute_vm<4>, (const void*) execute_vm<8> };
-
-	for (int i = 0; i < 3; ++i)
+	for (auto p : { (const void*) init_vm<2>, (const void*) init_vm<4>, (const void*) init_vm<8> })
 	{
-		cudaStatus = cudaFuncSetCacheConfig(init_vm_list[i], cudaFuncCachePreferShared);
+		cudaStatus = cudaFuncSetCacheConfig(p, cudaFuncCachePreferShared);
 		if (cudaStatus != cudaSuccess)
 		{
-			fprintf(stderr, "Failed to set cache config for init_vm<%d>!\n", 1 << (i + 1));
+			fprintf(stderr, "Failed to set cache config for init_vm!\n");
 			return false;
 		}
+	}
 
-		cudaStatus = cudaFuncSetCacheConfig(execute_vm_list[i], cudaFuncCachePreferShared);
+	for (auto p : { (const void*) execute_vm<2, false>, (const void*) execute_vm<4, false>, (const void*) execute_vm<8, false>, (const void*) execute_vm<2, true>, (const void*) execute_vm<4, true>, (const void*) execute_vm<8, true> })
+	{
+		cudaStatus = cudaFuncSetCacheConfig(p, cudaFuncCachePreferShared);
 		if (cudaStatus != cudaSuccess)
 		{
-			fprintf(stderr, "Failed to set cache config for execute_vm<%d>!\n", 1 << (i + 1));
+			fprintf(stderr, "Failed to set cache config for execute_vm!\n");
 			return false;
 		}
 	}
@@ -328,6 +335,8 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t star
 	std::vector<std::thread> threads;
 	std::atomic<uint32_t> nonce_counter;
 	bool cpu_limited = false;
+
+	uint32_t failed_nonces = 0;
 
 	for (uint32_t nonce = start_nonce, k = 0; nonce < 0xFFFFFFFFUL; nonce += batch_size, ++k)
 	{
@@ -373,7 +382,15 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t star
 			if (validate)
 			{
 				const uint32_t n = nonce - start_nonce;
-				printf("%u hashes validated successfully, IPC %.4f, WPC %.4f, %.0f h/s%s\n", n, n * RANDOMX_PROGRAM_SIZE * RANDOMX_PROGRAM_COUNT / num_vm_cycles, num_slots_used / num_vm_cycles, batch_size / dt, cpu_limited ? ", limited by CPU" : "                ");
+				printf("%u (%.3f%%) hashes validated successfully, %u (%.3f%%) hashes failed, IPC %.4f, WPC %.4f, %.0f h/s%s\n",
+					n - failed_nonces,
+					static_cast<double>(n - failed_nonces) / n * 100.0,
+					failed_nonces,
+					static_cast<double>(failed_nonces) / n * 100.0,
+					n * RANDOMX_PROGRAM_SIZE * RANDOMX_PROGRAM_COUNT / num_vm_cycles,
+					num_slots_used / num_vm_cycles, batch_size / dt,
+					cpu_limited ? ", limited by CPU" : "                "
+				);
 			}
 			else
 			{
@@ -417,7 +434,10 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t star
 				init_vm<2><<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu, num_vm_cycles_gpu);
 				for (int j = 0, n = 1 << bfactor; j < n; ++j)
 				{
-					execute_vm<2><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, rounding_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
+					if (fast_fp)
+						execute_vm<2, false><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, rounding_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
+					else
+						execute_vm<2, true><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, rounding_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
 				}
 				break;
 
@@ -425,7 +445,10 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t star
 				init_vm<4><<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu, num_vm_cycles_gpu);
 				for (int j = 0, n = 1 << bfactor; j < n; ++j)
 				{
-					execute_vm<4><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, rounding_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
+					if (fast_fp)
+						execute_vm<4, false><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, rounding_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
+					else
+						execute_vm<4, true><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, rounding_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
 				}
 				break;
 
@@ -433,7 +456,10 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t star
 				init_vm<8><<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu, num_vm_cycles_gpu);
 				for (int j = 0, n = 1 << bfactor; j < n; ++j)
 				{
-					execute_vm<8><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, rounding_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
+					if (fast_fp)
+						execute_vm<8, false><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, rounding_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
+					else
+						execute_vm<8, true><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, rounding_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
 				}
 				break;
 			}
@@ -482,16 +508,14 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, uint32_t star
 
 			if (memcmp(hashes.data(), hashes_check.data(), batch_size * 32) != 0)
 			{
-				fprintf(stderr, "\nCPU validation error, ");
 				for (uint32_t i = 0; i < batch_size * 32; i += 32)
 				{
 					if (memcmp(hashes.data() + i, hashes_check.data() + i, 32))
 					{
-						fprintf(stderr, "failing nonce = %u\n", nonce + i / 32);
-						break;
+						fprintf(stderr, "CPU validation error, failing nonce = %u\n", nonce + i / 32);
+						++failed_nonces;
 					}
 				}
-				return false;
 			}
 		}
 	}

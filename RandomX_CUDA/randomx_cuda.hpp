@@ -1587,7 +1587,7 @@ __device__ void load_buffer(T (&dst_buf)[N], const void* src_buf)
 
 template<int> __device__ double fma_rnd(double a, double b, double c, uint32_t fprc);
 template<int> __device__ double div_rnd(double a, double b, uint32_t fprc);
-template<int> __device__ double sqrt_rnd(double a, uint32_t fprc);
+template<int, bool> __device__ double sqrt_rnd(double x, uint32_t fprc);
 
 template<> __device__ double fma_rnd<0>(double a, double b, double c, uint32_t) { return __fma_rn(a, b, c); }
 template<> __device__ double fma_rnd<1>(double a, double b, double c, uint32_t) { return __fma_rd(a, b, c); }
@@ -1598,9 +1598,9 @@ template<> __device__ double div_rnd<0>(double a, double b, uint32_t) { return _
 template<> __device__ double div_rnd<1>(double a, double b, uint32_t) { return __ddiv_rd(a, b); }
 template<> __device__ double div_rnd<2>(double a, double b, uint32_t) { return __ddiv_ru(a, b); }
 
-template<> __device__ double sqrt_rnd<0>(double a, uint32_t) { return __dsqrt_rn(a); }
-template<> __device__ double sqrt_rnd<1>(double a, uint32_t) { return __dsqrt_rd(a); }
-template<> __device__ double sqrt_rnd<2>(double a, uint32_t) { return __dsqrt_ru(a); }
+template<> __device__ double sqrt_rnd<0, true>(double a, uint32_t) { return __dsqrt_rn(a); }
+template<> __device__ double sqrt_rnd<1, true>(double a, uint32_t) { return __dsqrt_rd(a); }
+template<> __device__ double sqrt_rnd<2, true>(double a, uint32_t) { return __dsqrt_ru(a); }
 
 template<> __device__ double fma_rnd<-1>(double a, double b, double c, uint32_t fprc)
 {
@@ -1624,17 +1624,68 @@ template<> __device__ double div_rnd<-1>(double a, double b, uint32_t fprc)
 		return div_rnd<1>(a, b, 3);
 }
 
-template<> __device__ double sqrt_rnd<-1>(double a, uint32_t fprc)
+template<> __device__ double sqrt_rnd<-1, true>(double a, uint32_t fprc)
 {
 	if (fprc == 0)
-		return sqrt_rnd<0>(a, 0);
+		return sqrt_rnd<0, true>(a, 0);
 	else if (fprc == 2)
-		return sqrt_rnd<2>(a, 2);
+		return sqrt_rnd<2, true>(a, 2);
 	else
-		return sqrt_rnd<1>(a, 3);
+		return sqrt_rnd<1, true>(a, 3);
 }
 
-template<int WORKERS_PER_HASH, int ROUNDING_MODE>
+template<> __device__ double sqrt_rnd<-1, false>(double x, uint32_t fprc)
+{
+	// Initial approximation
+	double y0, t0, t1;
+	asm("rsqrt.approx.ftz.f64 %0, %1;" : "=d"(y0) : "d"(x));
+
+	// Improve initial approximation (can be skipped)
+	// 1 of 2^28 square roots will be incorrect in the last bit without it (1 incorrect hash per ~2731 hashes)
+	//y0 = __fma_rn(y0, __fma_rn(y0 * -0.5, y0 * x, 0.5), y0);
+
+	// First Newton-Raphson iteration
+	t0 = y0 * x;
+	t1 = y0 * -0.5;
+	t1 = __fma_rn(t1, t0, 0.5);					// 0.5 * (1.0 - y0 * y0 * x)
+	const double y1_x = __fma_rn(t0, t1, t0);	// y1 * x = 0.5 * y0 * x * (3.0 - y0 * y0 * x)
+
+	// Second Newton-Raphson iteration
+	y0 *= 0.5;
+	y0 = __fma_rn(y0, t1, y0);					// 0.5 * y1
+	t1 = __fma_rn(-y1_x, y1_x, x);				// x * (1.0 - x * y1 * y1)
+
+	double result;
+	result = __fma_rn(t1, y0, y1_x);		// x * 0.5 * y1 * (3.0 - x * y1 * y1)
+
+	// Get result in the other 2 rounding modes
+	const double result_rd = __fma_rd(t1, y0, y1_x);
+	const double result_ru = __fma_ru(t1, y0, y1_x);
+	if (fprc & 1) result = result_rd;
+	if (fprc == 2) result = result_ru;
+
+	// Check for infinity
+	if (*((uint64_t*)&x) == (2047ULL << 52)) result = x;
+
+	//double check;
+	//if (fprc == 0)
+	//	check = __dsqrt_rn(x);
+	//else if (fprc == 2)
+	//	check = __dsqrt_ru(x);
+	//else
+	//	check = __dsqrt_rd(x);
+
+	//if (result != check)
+	//{
+	//	const uint32_t idx = (blockIdx.x * blockDim.x + threadIdx.x) / 8;
+	//	const int64_t delta = *(int64_t*)(&result) - *(int64_t*)(&check);
+	//	printf("idx = %u x = %e d = %lld\n", idx, x, delta);
+	//}
+
+	return result;
+}
+
+template<int WORKERS_PER_HASH, int ROUNDING_MODE, bool HIGH_PRECISION>
 __device__ void inner_loop(
 	const uint32_t program_length,
 	const uint32_t* compiled_program,
@@ -1797,7 +1848,7 @@ __device__ void inner_loop(
 				else if (opcode == 14)
 				{
 					asm("// FSQRT_R (6/256) ------>");
-					dst = bit_cast<uint64_t>(sqrt_rnd<ROUNDING_MODE>(__longlong_as_double(dst), fprc));
+					dst = bit_cast<uint64_t>(sqrt_rnd<ROUNDING_MODE, HIGH_PRECISION>(__longlong_as_double(dst), fprc));
 					asm("// <------ FSQRT_R (6/256)");
 				}
 				else if (opcode == 6)
@@ -1885,7 +1936,7 @@ __device__ void inner_loop(
 	}
 }
 
-template<int WORKERS_PER_HASH>
+template<int WORKERS_PER_HASH, bool HIGH_PRECISION>
 __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* rounding, void* scratchpads, const void* dataset_ptr, uint32_t batch_size, uint32_t num_iterations, bool first, bool last)
 {
 	// 2 hashes per warp, 4 KB shared memory for VM states
@@ -1980,7 +2031,7 @@ __global__ void __launch_bounds__(16, 16) execute_vm(void* vm_states, void* roun
 		//}
 
 		if ((WORKERS_PER_HASH == 8) || (sub < WORKERS_PER_HASH))
-			inner_loop<WORKERS_PER_HASH, RANDOMX_FREQ_CFROUND ? -1 : 0>(program_length, compiled_program, sub, scratchpad, fp_reg_offset, fp_reg_group_A_offset, R, imm_buf, batch_size, fprc, fp_workers_mask, xexponentMask, workers_mask);
+			inner_loop<WORKERS_PER_HASH, RANDOMX_FREQ_CFROUND ? -1 : 0, HIGH_PRECISION>(program_length, compiled_program, sub, scratchpad, fp_reg_offset, fp_reg_group_A_offset, R, imm_buf, batch_size, fprc, fp_workers_mask, xexponentMask, workers_mask);
 
 		//if ((global_index == 0) && (ic == RANDOMX_PROGRAM_ITERATIONS - 1))
 		//{
