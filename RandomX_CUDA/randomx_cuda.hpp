@@ -1853,7 +1853,7 @@ __device__ void inner_loop(
 					const uint64_t imm64 = *((uint64_t*) &imm);
 					if (inst & (1 << SRC_IS_IMM64_OFFSET)) src = imm64;
 					if (opcode == 2) dst *= src;
-					if (is_fp) src = 0x81F0000000000000ULL;
+					if (is_fp) src = 0x80F0000000000000ULL;
 					if (opcode == 3) dst ^= src;
 					asm("// <------ IADD_RS, IADD_M, ISUB_R, ISUB_M, IMUL_R, IMUL_M, IMUL_RCP, IXOR_R, IXOR_M, FSCAL_R (109/256)");
 				}
