@@ -1586,7 +1586,7 @@ __device__ void load_buffer(T (&dst_buf)[N], const void* src_buf)
 }
 
 template<int> __device__ double fma_rnd(double a, double b, double c, uint32_t fprc);
-template<int> __device__ double div_rnd(double a, double b, uint32_t fprc);
+template<int, bool> __device__ double div_rnd(double a, double b, uint32_t fprc);
 template<int, bool> __device__ double sqrt_rnd(double x, uint32_t fprc);
 
 template<> __device__ double fma_rnd<0>(double a, double b, double c, uint32_t) { return __fma_rn(a, b, c); }
@@ -1594,9 +1594,9 @@ template<> __device__ double fma_rnd<1>(double a, double b, double c, uint32_t) 
 template<> __device__ double fma_rnd<2>(double a, double b, double c, uint32_t) { return __fma_ru(a, b, c); }
 template<> __device__ double fma_rnd<3>(double a, double b, double c, uint32_t) { return __fma_rz(a, b, c); }
 
-template<> __device__ double div_rnd<0>(double a, double b, uint32_t) { return __ddiv_rn(a, b); }
-template<> __device__ double div_rnd<1>(double a, double b, uint32_t) { return __ddiv_rd(a, b); }
-template<> __device__ double div_rnd<2>(double a, double b, uint32_t) { return __ddiv_ru(a, b); }
+template<> __device__ double div_rnd<0, true>(double a, double b, uint32_t) { return __ddiv_rn(a, b); }
+template<> __device__ double div_rnd<1, true>(double a, double b, uint32_t) { return __ddiv_rd(a, b); }
+template<> __device__ double div_rnd<2, true>(double a, double b, uint32_t) { return __ddiv_ru(a, b); }
 
 template<> __device__ double sqrt_rnd<0, true>(double a, uint32_t) { return __dsqrt_rn(a); }
 template<> __device__ double sqrt_rnd<1, true>(double a, uint32_t) { return __dsqrt_rd(a); }
@@ -1614,14 +1614,14 @@ template<> __device__ double fma_rnd<-1>(double a, double b, double c, uint32_t 
 		return fma_rnd<3>(a, b, c, 3);
 }
 
-template<> __device__ double div_rnd<-1>(double a, double b, uint32_t fprc)
+template<> __device__ double div_rnd<-1, true>(double a, double b, uint32_t fprc)
 {
 	if (fprc == 0)
-		return div_rnd<0>(a, b, 0);
+		return div_rnd<0, true>(a, b, 0);
 	else if (fprc == 2)
-		return div_rnd<2>(a, b, 2);
+		return div_rnd<2, true>(a, b, 2);
 	else
-		return div_rnd<1>(a, b, 3);
+		return div_rnd<1, true>(a, b, 1);
 }
 
 template<> __device__ double sqrt_rnd<-1, true>(double a, uint32_t fprc)
@@ -1631,7 +1631,59 @@ template<> __device__ double sqrt_rnd<-1, true>(double a, uint32_t fprc)
 	else if (fprc == 2)
 		return sqrt_rnd<2, true>(a, 2);
 	else
-		return sqrt_rnd<1, true>(a, 3);
+		return sqrt_rnd<1, true>(a, 1);
+}
+
+template<> __device__ double div_rnd<-1, false>(double a, double b, uint32_t fprc)
+{
+	// Initial approximation
+	double y0;
+	asm("rcp.approx.ftz.f64 %0, %1;" : "=d"(y0) : "d"(b));
+
+	// Improve initial approximation (can be skipped)
+	// 1 of 2^31 quotients will be incorrect in the last bit without it (1 incorrect hash per ~32768 hashes)
+	//y0 = __fma_rn(y0, __fma_rn(-b, y0, 1.0), y0);
+
+	// First Newton-Raphson iteration
+	const double y1 = __fma_rn(y0, __fma_rn(-b, y0, 1.0), y0);
+	const double t0 = a * y1;
+	const double t1 = __fma_rn(-b, t0, a);
+
+	// Second Newton-Raphson iteration
+	double result = __fma_rn(y1, t1, t0);
+
+	// Get result in the other 2 rounding modes
+	const double result_rd = __fma_rd(y1, t1, t0);
+	const double result_ru = __fma_ru(y1, t1, t0);
+	if (fprc & 1) result = result_rd;
+	if (fprc == 2) result = result_ru;
+
+	// Check for infinity/NaN
+	const uint64_t inf = 2047ULL << 52;
+	const uint64_t inf_rnd = inf - (fprc & 1);
+
+	if (((*((uint64_t*) &result) >> 52) & 2047) == 2047) result = *((const double*) &inf_rnd);
+	if (*((uint64_t*) &a) == inf) result = a;
+
+	// Check for exact equality
+	if (a == b) result = 1.0;
+
+	//double check;
+	//if (fprc == 0)
+	//	check = __ddiv_rn(a, b);
+	//else if (fprc == 2)
+	//	check = __ddiv_ru(a, b);
+	//else
+	//	check = __ddiv_rd(a, b);
+
+	//if (result != check)
+	//{
+	//	const uint32_t idx = (blockIdx.x * blockDim.x + threadIdx.x) / 8;
+	//	const int64_t delta = *(int64_t*)(&result) - *(int64_t*)(&check);
+	//	printf("idx = %u fprc = %u a = %016llx b = %016llx result = %016llx check = %016llx d = %lld\n", idx, fprc, a, b, result, check, delta);
+	//}
+
+	return result;
 }
 
 template<> __device__ double sqrt_rnd<-1, false>(double x, uint32_t fprc)
@@ -1876,7 +1928,7 @@ __device__ void inner_loop(
 					src = bit_cast<uint64_t>(__int2double_rn(static_cast<int32_t>(src >> ((sub & 1) * 32))));
 					src &= randomx::dynamicMantissaMask;
 					src |= xexponentMask;
-					dst = bit_cast<uint64_t>(div_rnd<ROUNDING_MODE>(__longlong_as_double(dst), __longlong_as_double(src), fprc));
+					dst = bit_cast<uint64_t>(div_rnd<ROUNDING_MODE, HIGH_PRECISION>(__longlong_as_double(dst), __longlong_as_double(src), fprc));
 					asm("// <------ FDIV_M (4/256)");
 				}
 				else if (opcode == 5)
