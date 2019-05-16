@@ -505,7 +505,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp,
 
 		cudaStatus = cudaDeviceSynchronize();
 		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaDeviceSynchronize returned error code %d!\n", cudaStatus);
+			fprintf(stderr, "cudaDeviceSynchronize failed (%d): %s\n", cudaStatus, cudaGetErrorString(cudaStatus));
 			return false;
 		}
 
