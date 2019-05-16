@@ -1663,10 +1663,13 @@ template<> __device__ double div_rnd<-1, false>(double a, double b, uint32_t fpr
 	double result = __fma_rn(y1, t1, t0);
 
 	// Get result in the other 2 rounding modes
-	const double result_rd = __fma_rd(y1, t1, t0);
-	const double result_ru = __fma_ru(y1, t1, t0);
-	if (fprc & 1) result = result_rd;
-	if (fprc == 2) result = result_ru;
+	if (fprc)
+	{
+		const double result_rd = __fma_rd(y1, t1, t0);
+		const double result_ru = __fma_ru(y1, t1, t0);
+		if (fprc & 1) result = result_rd;
+		if (fprc == 2) result = result_ru;
+	}
 
 	// Check for infinity/NaN
 	const uint64_t inf = 2047ULL << 52;
@@ -1721,10 +1724,13 @@ template<> __device__ double sqrt_rnd<-1, false>(double x, uint32_t fprc)
 	result = __fma_rn(t1, y0, y1_x);		// x * 0.5 * y1 * (3.0 - x * y1 * y1)
 
 	// Get result in the other 2 rounding modes
-	const double result_rd = __fma_rd(t1, y0, y1_x);
-	const double result_ru = __fma_ru(t1, y0, y1_x);
-	if (fprc & 1) result = result_rd;
-	if (fprc == 2) result = result_ru;
+	if (fprc)
+	{
+		const double result_rd = __fma_rd(t1, y0, y1_x);
+		const double result_ru = __fma_ru(t1, y0, y1_x);
+		if (fprc & 1) result = result_rd;
+		if (fprc == 2) result = result_ru;
+	}
 
 	// Check for infinity
 	if (*((uint64_t*)&x) == (2047ULL << 52)) result = x;
