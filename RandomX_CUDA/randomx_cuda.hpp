@@ -1954,12 +1954,10 @@ __device__ void inner_loop(
 					if (new_fprc != fprc) sync_needed = true;
 					fprc = new_fprc;
 					asm("// <------ CFROUND (1/256)");
+					goto execution_end;
 				}
 
-				// opcode 16 (CFROUND) check will be skipped and removed entirely by the compiler if ROUNDING_MODE >= 0 ("||" operator uses short-circuit evaluation in C++)
-				if ((ROUNDING_MODE >= 0) || (opcode != 16))
-					*dst_ptr = dst;
-
+				*dst_ptr = dst;
 				asm("// EXECUTION END");
 			}
 		}
