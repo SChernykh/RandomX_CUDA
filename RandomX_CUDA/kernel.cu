@@ -46,7 +46,7 @@ int main(int argc, char** argv)
 		printf("Usage: %s --mine device_id [--validate] [--bfactor N] [--workers N] [--fast_fp] [--nonce N] [--intensity N]\n\n", argv[0]);
 		printf("device_id    0 if you have only 1 GPU\n");
 		printf("bfactor      0-10, default is 0. Increase it if you get CUDA errors/driver crashes/screen lags.\n");
-		printf("workers      2,4,8, default is 8. Choose the value that gives you the best hashrate (it's usually 4 or 8).\n");
+		printf("workers      2,4,8,16, default is 8. Choose the value that gives you the best hashrate (it's usually 8 or 16).\n");
 		printf("fast_fp      use faster, but sometimes incorrect code for floating point instructions");
 		printf("nonce        any integer >= 0, default is 0. Mining will start from this nonce.\n");
 		printf("intensity    number of scratchpads to allocate, if it's not set then as many as possible will be allocated.\n\n");
@@ -95,6 +95,7 @@ int main(int argc, char** argv)
 			case 2:
 			case 4:
 			case 8:
+			case 16:
 				break;
 
 			default:
@@ -306,7 +307,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp,
 
 	printf("%zu MB free GPU memory left\n", free_mem >> 20);
 
-	for (auto p : { (const void*) init_vm<2>, (const void*) init_vm<4>, (const void*) init_vm<8> })
+	for (auto p : { init_vm<2>, init_vm<4>, init_vm<8>, init_vm<16> })
 	{
 		cudaStatus = cudaFuncSetCacheConfig(p, cudaFuncCachePreferShared);
 		if (cudaStatus != cudaSuccess)
@@ -316,7 +317,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp,
 		}
 	}
 
-	for (auto p : { (const void*) execute_vm<2, false>, (const void*) execute_vm<4, false>, (const void*) execute_vm<8, false>, (const void*) execute_vm<2, true>, (const void*) execute_vm<4, true>, (const void*) execute_vm<8, true> })
+	for (auto p : { execute_vm<2, false>, execute_vm<4, false>, execute_vm<8, false>, execute_vm<16, false>, execute_vm<2, true>, execute_vm<4, true>, execute_vm<8, true>, execute_vm<16, true> })
 	{
 		cudaStatus = cudaFuncSetCacheConfig(p, cudaFuncCachePreferShared);
 		if (cudaStatus != cudaSuccess)
@@ -460,6 +461,17 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp,
 						execute_vm<8, false><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, rounding_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
 					else
 						execute_vm<8, true><<<batch_size / 2, 2 * 8>>>(vm_states_gpu, rounding_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
+				}
+				break;
+
+			case 16:
+				init_vm<16><<<batch_size / 4, 4 * 8>>>(entropy_gpu, vm_states_gpu, num_vm_cycles_gpu);
+				for (int j = 0, n = 1 << bfactor; j < n; ++j)
+				{
+					if (fast_fp)
+						execute_vm<16, false><<<batch_size / 2, 2 * 16>>>(vm_states_gpu, rounding_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
+					else
+						execute_vm<16, true><<<batch_size / 2, 2 * 16>>>(vm_states_gpu, rounding_gpu, scratchpads_gpu, dataset_gpu, batch_size, RANDOMX_PROGRAM_ITERATIONS >> bfactor, j == 0, j == n - 1);
 				}
 				break;
 			}
