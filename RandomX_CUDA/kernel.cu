@@ -387,7 +387,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp,
 					static_cast<double>(n - failed_nonces) / n * 100.0,
 					failed_nonces,
 					static_cast<double>(failed_nonces) / n * 100.0,
-					n * RANDOMX_PROGRAM_SIZE * RANDOMX_PROGRAM_COUNT / num_vm_cycles,
+					n * (RANDOMX_PROGRAM_SIZE - RANDOMX_FREQ_NOP) * RANDOMX_PROGRAM_COUNT / num_vm_cycles,
 					num_slots_used / num_vm_cycles, batch_size / dt,
 					cpu_limited ? ", limited by CPU" : "                "
 				);

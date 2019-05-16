@@ -1354,8 +1354,8 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				{
 					imm_buf[imm_index] = ((const uint32_t*)&r)[0];
 					imm_buf[imm_index + 1] = ((const uint32_t*)&r)[1];
+					imm_index += 2;
 				}
-				imm_index += 2;
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
@@ -1478,7 +1478,15 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 
 			if (opcode < RANDOMX_FREQ_FSCAL_R)
 			{
-				inst.x = ((dst % randomx::RegisterCountFlt) << DST_OFFSET) | (3 << OPCODE_OFFSET);
+				inst.x = ((dst % randomx::RegisterCountFlt) << DST_OFFSET) | (1 << SRC_IS_IMM64_OFFSET) | (3 << OPCODE_OFFSET);
+				inst.x |= (imm_index << IMM_OFFSET);
+
+				if (imm_index < IMM_INDEX_COUNT - 1)
+				{
+					imm_buf[imm_index] = 0;
+					imm_buf[imm_index + 1] = 0x80F00000UL;
+					imm_index += 2;
+				}
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
@@ -1531,8 +1539,8 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				{
 					imm_buf[imm_index] = imm;
 					imm_buf[imm_index + 1] = cshift | (static_cast<uint32_t>(branch_target_slot) << 5);
+					imm_index += 2;
 				}
-				imm_index += 2;
 
 				branch_target_slot = -1;
 
@@ -1594,10 +1602,12 @@ template<> __device__ double fma_rnd<1>(double a, double b, double c, uint32_t) 
 template<> __device__ double fma_rnd<2>(double a, double b, double c, uint32_t) { return __fma_ru(a, b, c); }
 template<> __device__ double fma_rnd<3>(double a, double b, double c, uint32_t) { return __fma_rz(a, b, c); }
 
+template<> __device__ double div_rnd<0, false>(double a, double b, uint32_t) { return __ddiv_rn(a, b); }
 template<> __device__ double div_rnd<0, true>(double a, double b, uint32_t) { return __ddiv_rn(a, b); }
 template<> __device__ double div_rnd<1, true>(double a, double b, uint32_t) { return __ddiv_rd(a, b); }
 template<> __device__ double div_rnd<2, true>(double a, double b, uint32_t) { return __ddiv_ru(a, b); }
 
+template<> __device__ double sqrt_rnd<0, false>(double a, uint32_t) { return __dsqrt_rn(a); }
 template<> __device__ double sqrt_rnd<0, true>(double a, uint32_t) { return __dsqrt_rn(a); }
 template<> __device__ double sqrt_rnd<1, true>(double a, uint32_t) { return __dsqrt_rd(a); }
 template<> __device__ double sqrt_rnd<2, true>(double a, uint32_t) { return __dsqrt_ru(a); }
@@ -1853,7 +1863,6 @@ __device__ void inner_loop(
 					const uint64_t imm64 = *((uint64_t*) &imm);
 					if (inst & (1 << SRC_IS_IMM64_OFFSET)) src = imm64;
 					if (opcode == 2) dst *= src;
-					if (is_fp) src = 0x80F0000000000000ULL;
 					if (opcode == 3) dst ^= src;
 					asm("// <------ IADD_RS, IADD_M, ISUB_R, ISUB_M, IMUL_R, IMUL_M, IMUL_RCP, IXOR_R, IXOR_M, FSCAL_R (109/256)");
 				}
