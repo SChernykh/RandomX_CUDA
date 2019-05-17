@@ -141,7 +141,7 @@ __device__ void test_memory_access(uint64_t* r, uint8_t* scratchpad, uint32_t ba
 #define LOC_L2 (32 - 18)
 #define LOC_L3 (32 - 21)
 
-#define IMM_INDEX_COUNT 192
+#define IMM_INDEX_COUNT 190
 
 __device__ uint64_t imul_rcp_value(uint32_t divisor)
 {
@@ -1762,7 +1762,7 @@ __device__ void inner_loop(
 	const uint32_t fp_reg_offset,
 	const uint32_t fp_reg_group_A_offset,
 	uint64_t* R,
-	const uint32_t* imm_buf,
+	uint32_t* imm_buf,
 	const uint32_t batch_size,
 	uint32_t &fprc,
 	const uint32_t fp_workers_mask,
@@ -1771,17 +1771,17 @@ __device__ void inner_loop(
 )
 {
 	const int32_t sub2 = sub >> 1;
+	imm_buf[191] = fprc;
 
 	#pragma unroll(1)
 	for (int32_t ip = 0; ip < program_length;)
 	{
+		imm_buf[190] = ip;
+
 		uint32_t inst = compiled_program[ip];
 		const int32_t num_workers = (inst >> NUM_INSTS_OFFSET) & (WORKERS_PER_HASH - 1);
 		const int32_t num_fp_insts = (inst >> NUM_FP_INSTS_OFFSET) & (WORKERS_PER_HASH - 1);
 		const int32_t num_insts = num_workers - num_fp_insts;
-
-		bool sync_needed = false;
-		uint32_t opcode = 0;
 
 		if (sub <= num_workers)
 		{
@@ -1795,7 +1795,7 @@ __device__ void inner_loop(
 
 			asm("// INSTRUCTION DECODING BEGIN");
 
-			opcode = (inst >> OPCODE_OFFSET) & 15;
+			uint32_t opcode = (inst >> OPCODE_OFFSET) & 15;
 			const uint32_t location = (inst >> LOC_OFFSET) & 1;
 
 			const uint32_t reg_size_shift = is_fp ? 4 : 3;
@@ -1893,9 +1893,7 @@ __device__ void inner_loop(
 					dst += static_cast<int32_t>(imm.x);
 					if ((static_cast<uint32_t>(dst) & (randomx::ConditionMask << (imm.y & 31))) == 0)
 					{
-						ip = (static_cast<int32_t>(imm.y) >> 5);
-						ip -= num_insts;
-						sync_needed = true;
+						imm_buf[190] = static_cast<uint32_t>((static_cast<int32_t>(imm.y) >> 5) - num_insts);
 					}
 					asm("// <------ CBRANCH (16/256)");
 				}
@@ -1956,9 +1954,7 @@ __device__ void inner_loop(
 				else if (ROUNDING_MODE < 0)
 				{
 					asm("// CFROUND (1/256) ------>");
-					const uint32_t new_fprc = ((src >> imm_offset) | (src << (64 - imm_offset))) & 3;
-					if (new_fprc != fprc) sync_needed = true;
-					fprc = new_fprc;
+					imm_buf[191] = ((src >> imm_offset) | (src << (64 - imm_offset))) & 3;
 					asm("// <------ CFROUND (1/256)");
 					goto execution_end;
 				}
@@ -1972,27 +1968,9 @@ __device__ void inner_loop(
 		{
 			asm("// SYNCHRONIZATION OF INSTRUCTION POINTER AND ROUNDING MODE BEGIN");
 
-			if (__ballot_sync(workers_mask, sync_needed))
-			{
-				int mask = __ballot_sync(workers_mask, opcode == 9);
-				if (mask)
-				{
-					int lane;
-					asm("bfind.u32 %0, %1;" : "=r"(lane) : "r"(mask));
-					ip = __shfl_sync(workers_mask, ip, lane, (WORKERS_PER_HASH == 16) ? 32 : 16);
-				}
-
-				if (ROUNDING_MODE < 0)
-				{
-					mask = __ballot_sync(workers_mask, opcode == 13);
-					if (mask)
-					{
-						int lane;
-						asm("bfind.u32 %0, %1;" : "=r"(lane) : "r"(mask));
-						fprc = __shfl_sync(workers_mask, fprc, lane, (WORKERS_PER_HASH == 16) ? 32 : 16);
-					}
-				}
-			}
+			__syncwarp(workers_mask);
+			ip = imm_buf[190];
+			fprc = imm_buf[191];
 
 			asm("// SYNCHRONIZATION OF INSTRUCTION POINTER AND ROUNDING MODE END");
 
@@ -2057,7 +2035,7 @@ __global__ void __launch_bounds__((WORKERS_PER_HASH == 16) ? 32 : 16, 16) execut
 	const uint64_t orMask2 = f_group ? 0 : eMask.y;
 	const uint64_t xexponentMask = (sub & 1) ? eMask.y : eMask.x;
 
-	const uint32_t* imm_buf = (const uint32_t*)(R + REGISTERS_SIZE / sizeof(uint64_t));
+	uint32_t* imm_buf = (uint32_t*)(R + REGISTERS_SIZE / sizeof(uint64_t));
 	const uint32_t* compiled_program = (const uint32_t*)(R + (REGISTERS_SIZE + IMM_BUF_SIZE) / sizeof(uint64_t));
 
 	const uint32_t workers_mask = ((1 << WORKERS_PER_HASH) - 1) << ((threadIdx.x / IDX_WIDTH) * IDX_WIDTH);
