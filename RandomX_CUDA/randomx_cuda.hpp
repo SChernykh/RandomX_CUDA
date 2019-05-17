@@ -1952,8 +1952,8 @@ __device__ void inner_loop(
 					dst = static_cast<uint64_t>(-static_cast<int64_t>(dst));
 					asm("// <------ INEG_R (2/256)");
 				}
-				// opcode 13 (CFROUND) check will be skipped and removed entirely by the compiler if ROUNDING_MODE >= 0 ("&&" operator uses short-circuit evaluation in C++)
-				else if ((ROUNDING_MODE < 0) && (opcode == 13))
+				// CFROUND check will be skipped and removed entirely by the compiler if ROUNDING_MODE >= 0
+				else if (ROUNDING_MODE < 0)
 				{
 					asm("// CFROUND (1/256) ------>");
 					const uint32_t new_fprc = ((src >> imm_offset) | (src << (64 - imm_offset))) & 3;
