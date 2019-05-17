@@ -8,8 +8,8 @@ GPUs tested so far:
 
 Model|CryptonightR H/S|RandomX H/S|Relative speed
 -----|---------------|-----------|--------------
-GTX 1660 Ti max overclock (2070/13760 MHz)|626 (98 W)|664 (103 W)|106.1%
-GTX 1660 Ti low power (1785/13760 MHz)|604 (70 W)|561 (70 W)|92.9%
+GTX 1660 Ti max overclock (2070/13760 MHz)|626 (98 W)|671 (103 W)|107.2%
+GTX 1660 Ti low power (1785/13760 MHz)|604 (70 W)|564 (70 W)|93.4%
 
 ## Building on Windows
 
