@@ -13,6 +13,7 @@ GTX 1660 Ti low power (1785/13760 MHz)|604 (70 W)|564 (70 W)|93.4%
 GTX 1070 [[1]](https://termbin.com/7qnq)|601 (91 W)|607 (109 W)|101.0%
 GTX 1070 Ti [[2]](https://termbin.com/orh3)|625 (97 W)|769 (123 W)|123.0%
 GTX 1080 Ti [[3]](https://termbin.com/lgir)|787 (145 W)|1136 (190 W)|144.3%
+RTX 2080 [[4]](https://termbin.com/cgxn)|828 (142 W)|1191 (189 W)|143.8%
 
 ## Building on Windows
 
