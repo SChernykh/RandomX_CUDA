@@ -194,29 +194,6 @@ __device__ void set_buffer(T (&dst_buf)[N], const U value)
 	}
 }
 
-__device__ uint32_t get_condition_register(uint64_t registerLastChanged, uint64_t registerWasChanged, uint64_t& registerUsageCount, int32_t& lastChanged)
-{
-	lastChanged = INT_MAX;
-	uint32_t minCount = 0xFFFFFFFFU;
-	uint32_t creg = 0;
-
-	for (uint32_t j = 0; j < 8; ++j)
-	{
-		uint32_t change = get_byte(registerLastChanged, j);
-		int32_t count = get_byte(registerUsageCount, j);
-		const int32_t k = (get_byte(registerWasChanged, j) == 0) ? -1 : static_cast<int32_t>(change);
-		if ((k < lastChanged) || ((change == lastChanged) && (count < minCount)))
-		{
-			lastChanged = k;
-			minCount = count;
-			creg = j;
-		}
-	}
-
-	registerUsageCount += (1ULL << (creg * 8));
-	return creg;
-}
-
 template<typename T, typename U>
 __device__ void update_max(T& value, const U next_value)
 {
@@ -465,7 +442,6 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 
 		uint64_t registerLastChanged = 0;
 		uint64_t registerWasChanged = 0;
-		uint64_t registerUsageCount = 0;
 
 		// Initialize CBRANCH instructions
 		for (uint32_t i = 0; i < RANDOMX_PROGRAM_SIZE; ++i)
@@ -530,8 +506,9 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 
 			if (opcode < RANDOMX_FREQ_CBRANCH)
 			{
-				int32_t lastChanged;
-				uint32_t creg = get_condition_register(registerLastChanged, registerWasChanged, registerUsageCount, lastChanged);
+				const uint32_t creg = dst;
+				const uint32_t change = get_byte(registerLastChanged, dst);
+				const int32_t lastChanged = (get_byte(registerWasChanged, dst) == 0) ? -1 : static_cast<int32_t>(change);
 
 				// Store condition register and branch target in CBRANCH instruction
 				*(uint32_t*)(src_program + i) = (src_inst.x & 0xFF0000FFU) | ((creg | ((lastChanged == -1) ? 0x90 : 0x10)) << 8) | ((static_cast<uint32_t>(lastChanged) & 0xFF) << 16);

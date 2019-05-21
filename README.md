@@ -1,6 +1,6 @@
 # RandomX CUDA implementation
 
-This repository contains full RandomX implementation for NVIDIA GPUs. The latest version of RandomX (as of May 15th, 2019) is supported.
+This repository contains full RandomX implementation for NVIDIA GPUs. The latest version of RandomX (as of May 21st, 2019) is supported.
 
 Note: it's only a benchmark/testing tool, not an actual miner. RandomX hashrate is expected to improve somewhat in the future thanks to further optimizations.
 
@@ -8,8 +8,8 @@ GPUs tested so far:
 
 Model|CryptonightR H/S|RandomX H/S|Relative speed
 -----|---------------|-----------|--------------
-GTX 1660 Ti max overclock (2070/13760 MHz)|626 (98 W)|671 (103 W)|107.2%
-GTX 1660 Ti low power (1785/13760 MHz)|604 (70 W)|564 (70 W)|93.4%
+GTX 1660 Ti max overclock (2070/13760 MHz)|626 (98 W)|660 (103 W)|105.4%
+GTX 1660 Ti low power (1785/13760 MHz)|604 (70 W)|555 (70 W)|91.9%
 GTX 1070 (1850/7600 MHz) [[1]](https://termbin.com/g2z7)|612 (89 W)|609 (108 W)|99.5%
 GTX 1070 Ti (1900/7600 MHz) [[2]](https://termbin.com/iyo1)|625 (97 W)|769 (123 W)|123.0%
 GTX 1080 Ti (1930/10010 MHz)[[3]](https://termbin.com/rva66)|787 (145 W)|1136 (190 W)|144.3%
