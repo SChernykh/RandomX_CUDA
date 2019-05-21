@@ -15,6 +15,7 @@ GTX 1070 Ti (1900/7600 MHz) [[2]](https://termbin.com/iyo1)|625 (97 W)|769 (123 
 GTX 1080 Ti (1930/10010 MHz)[[3]](https://termbin.com/rva66)|787 (145 W)|1136 (190 W)|144.3%
 RTX 2080 (1980/13740 MHz) [[4]](https://termbin.com/ou4t)|828 (142 W)|1191 (189 W)|143.8%
 RTX 2080 Ti (1845/13600 MHz) [[5]](https://termbin.com/zt40)|1028 (191 W)|1692 (235 W)|164.6%
+Titan V (1335/850 MHz) [[6]](https://termbin.com/qdc8)|1436 (101 W)|2199 (125 W)|153.1%
 
 ## Building on Windows
 
