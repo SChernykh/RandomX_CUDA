@@ -422,10 +422,10 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp,
 
 		for (size_t i = 0; i < RANDOMX_PROGRAM_COUNT; ++i)
 		{
-			fillAes1Rx4<ENTROPY_SIZE, false><<<batch_size / 32, 32 * 4>>>(hashes_gpu, entropy_gpu, batch_size);
+			fillAes4Rx4<ENTROPY_SIZE, false><<<batch_size / 32, 32 * 4>>>(hashes_gpu, entropy_gpu, batch_size);
 			cudaStatus = cudaGetLastError();
 			if (cudaStatus != cudaSuccess) {
-				fprintf(stderr, "fillAes1Rx4 launch failed: %s\n", cudaGetErrorString(cudaStatus));
+				fprintf(stderr, "fillAes4Rx4 launch failed: %s\n", cudaGetErrorString(cudaStatus));
 				return false;
 			}
 
@@ -674,7 +674,7 @@ void tests()
 	}
 
 	{
-		fillAes1Rx4<ENTROPY_SIZE, false><<<NUM_SCRATCHPADS_TEST / 32, 32 * 4 >>>(hash_gpu, programs_gpu, NUM_SCRATCHPADS_TEST);
+		fillAes4Rx4<ENTROPY_SIZE, false><<<NUM_SCRATCHPADS_TEST / 32, 32 * 4>>>(hash_gpu, programs_gpu, NUM_SCRATCHPADS_TEST);
 
 		cudaStatus = cudaDeviceSynchronize();
 		if (cudaStatus != cudaSuccess) {
@@ -696,22 +696,15 @@ void tests()
 
 		for (int i = 0; i < NUM_SCRATCHPADS_TEST; ++i)
 		{
-			fillAes1Rx4<false>(hash2 + i * 8, ENTROPY_SIZE, programs.data() + ENTROPY_SIZE * (NUM_SCRATCHPADS_TEST + i));
-
-			if (memcmp(hash + i * 8, hash2 + i * 8, 64) != 0)
-			{
-				fprintf(stderr, "fillAes1Rx4 test (hash) failed!\n");
-				return;
-			}
-
+			fillAes4Rx4<false>(hash2 + i * 8, ENTROPY_SIZE, programs.data() + ENTROPY_SIZE * (NUM_SCRATCHPADS_TEST + i));
 			if (memcmp(programs.data() + i * ENTROPY_SIZE, programs.data() + (NUM_SCRATCHPADS_TEST + i) * ENTROPY_SIZE, ENTROPY_SIZE) != 0)
 			{
-				fprintf(stderr, "fillAes1Rx4 test (program) failed!\n");
+				fprintf(stderr, "fillAes4Rx4 test (programs) failed!\n");
 				return;
 			}
 		}
 
-		printf("fillAes1Rx4 (programs) test passed\n");
+		printf("fillAes4Rx4 (programs) test passed\n");
 	}
 	
 	{

@@ -536,17 +536,17 @@ static __constant__ uint32_t AES_TABLE[2048] =
 };
 
 static __constant__ uint32_t AES_KEY_FILL[16] = {
-	0x84eeec2d, 0x454ff6d5, 0xca329132, 0xdf20a2e3,
-	0x017b63d0, 0xf10fc578, 0xfed0387f, 0x1deb5971,
-	0x327d7a52, 0x2f2c70a1, 0xa517ceb4, 0xdfc926b3,
-	0x5c8d77d3, 0x3d17da5e, 0xa0ece0a9, 0x341cf31c,
+	0x6daca553, 0x62716609, 0xdbb5552b, 0xb4f44917,
+	0x6d7caf07, 0x846a710d, 0x1725d378, 0x0da1dc4e,
+	0x3f1262f1, 0x9f947ec6, 0xf4c0794f, 0x3e20e345,
+	0x6aef8135, 0xb1ba317c, 0x16314c88, 0x49169154,
 };
 
 static __constant__ uint32_t AES_STATE_HASH[16] = {
-	0xc4778e00, 0x887af5ab, 0x1146d167, 0x8d3126fd,
-	0xb834ef4b, 0x1b95af89, 0x58da632b, 0x19fe9fa1,
-	0x7742dd3a, 0xab283a00, 0xc35ad744, 0x1bb2cd74,
-	0xe18b449a, 0xdc5d97cc, 0x49593c57, 0xbb30a58a,
+	0x92b52c0d, 0x9fa856de, 0xcc82db47, 0xd7983aad,
+	0x338d996e, 0x15c7b798, 0xf59e125a, 0xace78057,
+	0x6a770017, 0xae62c7d0, 0x5079506b, 0xe8a07ce4,
+	0x630a240c, 0x07ad828d, 0x79a10005, 0x7e994948,
 };
 
 __device__ uint32_t get_byte(uint32_t a, uint32_t start_bit)
@@ -607,6 +607,70 @@ __global__ void fillAes1Rx4(void* state, void* out, uint32_t batch_size)
 		x[1] = y[1];
 		x[2] = y[2];
 		x[3] = y[3];
+	}
+
+	*(uint4*)(s) = *(uint4*)(x);
+}
+
+template<uint64_t outputSize, bool strided>
+__global__ void fillAes4Rx4(void* state, void* out, uint32_t batch_size)
+{
+	static_assert((outputSize % 128) == 0, "Output size must be a multiple of 128");
+
+	__shared__ uint32_t T[2048];
+
+	const uint32_t stride_size = batch_size * 4;
+	const uint32_t global_index = blockIdx.x * blockDim.x + threadIdx.x;
+	if (global_index >= stride_size)
+		return;
+
+	const uint32_t idx = global_index / 4;
+	const uint32_t sub = global_index % 4;
+
+	for (int i = threadIdx.x; i < 2048; i += blockDim.x)
+		T[i] = AES_TABLE[i];
+
+	__syncthreads();
+
+	uint32_t* s = ((uint32_t*)state) + idx * (64 / sizeof(uint32_t)) + sub * (16 / sizeof(uint32_t));
+	uint32_t x[4] = { s[0], s[1], s[2], s[3] };
+
+	const uint32_t s1 = (sub & 1) ? 8 : 24;
+	const uint32_t s3 = (sub & 1) ? 24 : 8;
+
+	uint4* p = strided ? (((uint4*) out) + idx * 4 + sub) : (((uint4*)out) + idx * (outputSize / sizeof(uint4)) + sub);
+
+	const uint32_t* const t0 = (sub & 1) ? T : (T + 1024);
+	const uint32_t* const t1 = (sub & 1) ? (T + 256) : (T + 1792);
+	const uint32_t* const t2 = (sub & 1) ? (T + 512) : (T + 1536);
+	const uint32_t* const t3 = (sub & 1) ? (T + 768) : (T + 1280);
+
+	#pragma unroll(((outputSize % 512) == 0) ? 8 : 2)
+	for (uint32_t i = 0; i < outputSize / sizeof(uint4); i += 4, p += strided ? stride_size : 4)
+	{
+		uint32_t y[4];
+
+		y[0] = t0[get_byte(x[0], 0)] ^ t1[get_byte(x[1], s1)] ^ t2[get_byte(x[2], 16)] ^ t3[get_byte(x[3], s3)] ^ 0xf890465du;
+		y[1] = t0[get_byte(x[1], 0)] ^ t1[get_byte(x[2], s1)] ^ t2[get_byte(x[3], 16)] ^ t3[get_byte(x[0], s3)] ^ 0x7ffbe4a6u;
+		y[2] = t0[get_byte(x[2], 0)] ^ t1[get_byte(x[3], s1)] ^ t2[get_byte(x[0], 16)] ^ t3[get_byte(x[1], s3)] ^ 0x141f82b7u;
+		y[3] = t0[get_byte(x[3], 0)] ^ t1[get_byte(x[0], s1)] ^ t2[get_byte(x[1], 16)] ^ t3[get_byte(x[2], s3)] ^ 0xcf359e95u;
+
+		x[0] = t0[get_byte(y[0], 0)] ^ t1[get_byte(y[1], s1)] ^ t2[get_byte(y[2], 16)] ^ t3[get_byte(y[3], s3)] ^ 0x6a55c450u;
+		x[1] = t0[get_byte(y[1], 0)] ^ t1[get_byte(y[2], s1)] ^ t2[get_byte(y[3], 16)] ^ t3[get_byte(y[0], s3)] ^ 0xfee8278au;
+		x[2] = t0[get_byte(y[2], 0)] ^ t1[get_byte(y[3], s1)] ^ t2[get_byte(y[0], 16)] ^ t3[get_byte(y[1], s3)] ^ 0xbd5c5ac3u;
+		x[3] = t0[get_byte(y[3], 0)] ^ t1[get_byte(y[0], s1)] ^ t2[get_byte(y[1], 16)] ^ t3[get_byte(y[2], s3)] ^ 0x6741ffdcu;
+
+		y[0] = t0[get_byte(x[0], 0)] ^ t1[get_byte(x[1], s1)] ^ t2[get_byte(x[2], 16)] ^ t3[get_byte(x[3], s3)] ^ 0x114c47a4u;
+		y[1] = t0[get_byte(x[1], 0)] ^ t1[get_byte(x[2], s1)] ^ t2[get_byte(x[3], 16)] ^ t3[get_byte(x[0], s3)] ^ 0xd524fde4u;
+		y[2] = t0[get_byte(x[2], 0)] ^ t1[get_byte(x[3], s1)] ^ t2[get_byte(x[0], 16)] ^ t3[get_byte(x[1], s3)] ^ 0xa7279ad2u;
+		y[3] = t0[get_byte(x[3], 0)] ^ t1[get_byte(x[0], s1)] ^ t2[get_byte(x[1], 16)] ^ t3[get_byte(x[2], s3)] ^ 0x3d324aacu;
+
+		x[0] = t0[get_byte(y[0], 0)] ^ t1[get_byte(y[1], s1)] ^ t2[get_byte(y[2], 16)] ^ t3[get_byte(y[3], s3)] ^ 0x810c3a2au;
+		x[1] = t0[get_byte(y[1], 0)] ^ t1[get_byte(y[2], s1)] ^ t2[get_byte(y[3], 16)] ^ t3[get_byte(y[0], s3)] ^ 0x99a9aeffu;
+		x[2] = t0[get_byte(y[2], 0)] ^ t1[get_byte(y[3], s1)] ^ t2[get_byte(y[0], 16)] ^ t3[get_byte(y[1], s3)] ^ 0x42d3dbd9u;
+		x[3] = t0[get_byte(y[3], 0)] ^ t1[get_byte(y[0], s1)] ^ t2[get_byte(y[1], 16)] ^ t3[get_byte(y[2], s3)] ^ 0x76f6db08u;
+
+		*p = *(uint4*)(x);
 	}
 
 	*(uint4*)(s) = *(uint4*)(x);
@@ -674,15 +738,15 @@ __global__ void hashAes1Rx4(const void* input, void* hash, uint32_t batch_size)
 
 	uint32_t y[4];
 
-	y[0] = t0[get_byte(x[0], 0)] ^ t1[get_byte(x[1], s1)] ^ t2[get_byte(x[2], 16)] ^ t3[get_byte(x[3], s3)] ^ 0x11cbf247;
-	y[1] = t0[get_byte(x[1], 0)] ^ t1[get_byte(x[2], s1)] ^ t2[get_byte(x[3], 16)] ^ t3[get_byte(x[0], s3)] ^ 0x2a5a929c;
-	y[2] = t0[get_byte(x[2], 0)] ^ t1[get_byte(x[3], s1)] ^ t2[get_byte(x[0], 16)] ^ t3[get_byte(x[1], s3)] ^ 0xe4c5593d;
-	y[3] = t0[get_byte(x[3], 0)] ^ t1[get_byte(x[0], s1)] ^ t2[get_byte(x[1], 16)] ^ t3[get_byte(x[2], s3)] ^ 0x83951283;
+	y[0] = t0[get_byte(x[0], 0)] ^ t1[get_byte(x[1], s1)] ^ t2[get_byte(x[2], 16)] ^ t3[get_byte(x[3], s3)] ^ 0xf6fa8389;
+	y[1] = t0[get_byte(x[1], 0)] ^ t1[get_byte(x[2], s1)] ^ t2[get_byte(x[3], 16)] ^ t3[get_byte(x[0], s3)] ^ 0x8b24949f;
+	y[2] = t0[get_byte(x[2], 0)] ^ t1[get_byte(x[3], s1)] ^ t2[get_byte(x[0], 16)] ^ t3[get_byte(x[1], s3)] ^ 0x90dc56bf;
+	y[3] = t0[get_byte(x[3], 0)] ^ t1[get_byte(x[0], s1)] ^ t2[get_byte(x[1], 16)] ^ t3[get_byte(x[2], s3)] ^ 0x06890201;
 
-	x[0] = t0[get_byte(y[0], 0)] ^ t1[get_byte(y[1], s1)] ^ t2[get_byte(y[2], 16)] ^ t3[get_byte(y[3], s3)] ^ 0xce816c95;
-	x[1] = t0[get_byte(y[1], 0)] ^ t1[get_byte(y[2], s1)] ^ t2[get_byte(y[3], 16)] ^ t3[get_byte(y[0], s3)] ^ 0x477bef0b;
-	x[2] = t0[get_byte(y[2], 0)] ^ t1[get_byte(y[3], s1)] ^ t2[get_byte(y[0], 16)] ^ t3[get_byte(y[1], s3)] ^ 0xabbc2523;
-	x[3] = t0[get_byte(y[3], 0)] ^ t1[get_byte(y[0], s1)] ^ t2[get_byte(y[1], 16)] ^ t3[get_byte(y[2], s3)] ^ 0xff215bb2;
+	x[0] = t0[get_byte(y[0], 0)] ^ t1[get_byte(y[1], s1)] ^ t2[get_byte(y[2], 16)] ^ t3[get_byte(y[3], s3)] ^ 0x61b263d1;
+	x[1] = t0[get_byte(y[1], 0)] ^ t1[get_byte(y[2], s1)] ^ t2[get_byte(y[3], 16)] ^ t3[get_byte(y[0], s3)] ^ 0x51f4e03c;
+	x[2] = t0[get_byte(y[2], 0)] ^ t1[get_byte(y[3], s1)] ^ t2[get_byte(y[0], 16)] ^ t3[get_byte(y[1], s3)] ^ 0xee1043c6;
+	x[3] = t0[get_byte(y[3], 0)] ^ t1[get_byte(y[0], s1)] ^ t2[get_byte(y[1], 16)] ^ t3[get_byte(y[2], s3)] ^ 0xed18f99b;
 
 	*((uint4*)(hash) + idx * (hashStrideBytes / sizeof(uint4)) + sub + (hashOffsetBytes / sizeof(uint4))) = *(uint4*)(x);
 }
