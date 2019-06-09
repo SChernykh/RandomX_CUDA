@@ -1,6 +1,6 @@
 # RandomX CUDA implementation
 
-This repository contains full RandomX implementation for NVIDIA GPUs. The latest version of RandomX (as of June 1st, 2019) is supported.
+This repository contains full RandomX implementation for NVIDIA GPUs. The latest version of RandomX (1.0.3 as of June 1st, 2019) is supported.
 
 Note: it's only a benchmark/testing tool, not an actual miner. RandomX hashrate is expected to improve somewhat in the future thanks to further optimizations.
 
