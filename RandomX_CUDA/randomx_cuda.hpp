@@ -20,18 +20,15 @@ You should have received a copy of the GNU General Public License
 along with RandomX CUDA.  If not, see<http://www.gnu.org/licenses/>.
 */
 
-constexpr size_t DATASET_SIZE = 1U << 31;
-constexpr size_t SCRATCHPAD_SIZE = 1U << 21;
 constexpr size_t HASH_SIZE = 64;
 constexpr size_t ENTROPY_SIZE = 128 + 2048;
 constexpr size_t VM_STATE_SIZE = 2048;
 constexpr size_t REGISTERS_SIZE = 256;
 constexpr size_t IMM_BUF_SIZE = 768;
 
-constexpr int ScratchpadL3Mask64 = (1 << 21) - 64;
-
 constexpr uint32_t CacheLineSize = 64;
-constexpr uint32_t CacheLineAlignMask = (DATASET_SIZE - 1) & ~(CacheLineSize - 1);
+constexpr int ScratchpadL3Mask64 = RANDOMX_SCRATCHPAD_L3 - CacheLineSize;
+constexpr uint32_t CacheLineAlignMask = (RANDOMX_DATASET_BASE_SIZE - 1) & ~(CacheLineSize - 1);
 
 __device__ double getSmallPositiveFloatBits(uint64_t entropy)
 {
@@ -137,9 +134,12 @@ __device__ void test_memory_access(uint64_t* r, uint8_t* scratchpad, uint32_t ba
 // ISWAP r0, r0
 #define INST_NOP			(8 << OPCODE_OFFSET)
 
-#define LOC_L1 (32 - 14)
-#define LOC_L2 (32 - 18)
-#define LOC_L3 (32 - 21)
+template<size_t N> struct get_power_of_2 { enum { Value = get_power_of_2<N / 2>::Value + 1 }; };
+template<> struct get_power_of_2<1> { enum { Value = 0 }; };
+
+#define LOC_L1 (32 - get_power_of_2<RANDOMX_SCRATCHPAD_L1>::Value)
+#define LOC_L2 (32 - get_power_of_2<RANDOMX_SCRATCHPAD_L2>::Value)
+#define LOC_L3 (32 - get_power_of_2<RANDOMX_SCRATCHPAD_L3>::Value)
 
 #define IMM_INDEX_COUNT 190
 
