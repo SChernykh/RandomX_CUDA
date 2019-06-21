@@ -184,13 +184,13 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp,
 
 	// There should be enough GPU memory for the 2080 MB dataset, 32 scratchpads and 64 MB for everything else
 	const size_t dataset_size = randomx_dataset_item_count() * RANDOMX_DATASET_ITEM_SIZE;
-	if (free_mem <= dataset_size + (32U * RANDOMX_SCRATCHPAD_L3) + (64U << 20))
+	if (free_mem <= dataset_size + (32U * (RANDOMX_SCRATCHPAD_L3 + 64)) + (64U << 20))
 	{
 		fprintf(stderr, "Not enough free GPU memory!\n");
 		return false;
 	}
 
-	uint32_t batch_size = (intensity >= 32) ? intensity : static_cast<uint32_t>((free_mem - dataset_size - (64U << 20)) / RANDOMX_SCRATCHPAD_L3);
+	uint32_t batch_size = (intensity >= 32) ? intensity : static_cast<uint32_t>((free_mem - dataset_size - (64U << 20)) / (RANDOMX_SCRATCHPAD_L3 + 64));
 	batch_size = static_cast<uint32_t>(batch_size / 32) * 32;
 
 	GPUPtr dataset_gpu(dataset_size);
@@ -239,7 +239,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp,
 		printf("done in %.3f seconds\n", duration_cast<nanoseconds>(high_resolution_clock::now() - t1).count() / 1e9);
 	}
 
-	GPUPtr scratchpads_gpu(batch_size * RANDOMX_SCRATCHPAD_L3);
+	GPUPtr scratchpads_gpu(batch_size * (RANDOMX_SCRATCHPAD_L3 + 64));
 	if (!scratchpads_gpu)
 	{
 		fprintf(stderr, "Failed to allocate GPU memory for scratchpads!\n");
@@ -407,7 +407,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp,
 			return false;
 		}
 
-		fillAes1Rx4<RANDOMX_SCRATCHPAD_L3, true><<<batch_size / 32, 32 * 4>>>(hashes_gpu, scratchpads_gpu, batch_size);
+		fillAes1Rx4<RANDOMX_SCRATCHPAD_L3, false, 64><<<batch_size / 32, 32 * 4>>>(hashes_gpu, scratchpads_gpu, batch_size);
 		cudaStatus = cudaGetLastError();
 		if (cudaStatus != cudaSuccess) {
 			fprintf(stderr, "fillAes1Rx4 launch failed: %s\n", cudaGetErrorString(cudaStatus));
@@ -478,7 +478,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp,
 
 			if (i == RANDOMX_PROGRAM_COUNT - 1)
 			{
-				hashAes1Rx4<RANDOMX_SCRATCHPAD_L3, 192, VM_STATE_SIZE><<<batch_size / 32, 32 * 4>>>(scratchpads_gpu, vm_states_gpu, batch_size);
+				hashAes1Rx4<RANDOMX_SCRATCHPAD_L3, 192, VM_STATE_SIZE, 64><<<batch_size / 32, 32 * 4>>>(scratchpads_gpu, vm_states_gpu, batch_size);
 				cudaStatus = cudaGetLastError();
 				if (cudaStatus != cudaSuccess) {
 					fprintf(stderr, "hashAes1Rx4 launch failed: %s\n", cudaGetErrorString(cudaStatus));
@@ -541,7 +541,7 @@ void tests()
 	constexpr size_t NUM_SCRATCHPADS_BENCH = 2048;
 	constexpr size_t BLAKE2B_STEP = 1 << 28;
 
-	std::vector<uint8_t> scratchpads(RANDOMX_SCRATCHPAD_L3 * NUM_SCRATCHPADS_TEST * 2);
+	std::vector<uint8_t> scratchpads((RANDOMX_SCRATCHPAD_L3 + 64) * NUM_SCRATCHPADS_TEST * 2);
 	std::vector<uint8_t> programs(ENTROPY_SIZE * NUM_SCRATCHPADS_TEST * 2);
 
 	uint64_t hash[NUM_SCRATCHPADS_TEST * 8] = {};
@@ -573,13 +573,13 @@ void tests()
 		return;
 	}
 
-	GPUPtr scratchpads_gpu(RANDOMX_SCRATCHPAD_L3 * NUM_SCRATCHPADS_BENCH);
+	GPUPtr scratchpads_gpu((RANDOMX_SCRATCHPAD_L3 + 64) * NUM_SCRATCHPADS_BENCH);
 	if (!scratchpads_gpu) {
 		fprintf(stderr, "cudaMalloc failed!\n");
 		return;
 	}
 
-	GPUPtr programs_gpu(RANDOMX_SCRATCHPAD_L3 * NUM_SCRATCHPADS_TEST);
+	GPUPtr programs_gpu(ENTROPY_SIZE * NUM_SCRATCHPADS_TEST);
 	if (!programs_gpu) {
 		fprintf(stderr, "cudaMalloc failed!");
 		return;
@@ -628,7 +628,7 @@ void tests()
 	}
 
 	{
-		fillAes1Rx4<RANDOMX_SCRATCHPAD_L3, true><<<NUM_SCRATCHPADS_TEST / 32, 32 * 4>>>(hash_gpu, scratchpads_gpu, NUM_SCRATCHPADS_TEST);
+		fillAes1Rx4<RANDOMX_SCRATCHPAD_L3, false, 64><<<NUM_SCRATCHPADS_TEST / 32, 32 * 4>>>(hash_gpu, scratchpads_gpu, NUM_SCRATCHPADS_TEST);
 
 		cudaStatus = cudaDeviceSynchronize();
 		if (cudaStatus != cudaSuccess) {
@@ -642,7 +642,7 @@ void tests()
 			return;
 		}
 
-		cudaStatus = cudaMemcpy(scratchpads.data(), scratchpads_gpu, RANDOMX_SCRATCHPAD_L3 * NUM_SCRATCHPADS_TEST, cudaMemcpyDeviceToHost);
+		cudaStatus = cudaMemcpy(scratchpads.data(), scratchpads_gpu, (RANDOMX_SCRATCHPAD_L3 + 64) * NUM_SCRATCHPADS_TEST, cudaMemcpyDeviceToHost);
 		if (cudaStatus != cudaSuccess) {
 			fprintf(stderr, "cudaMemcpy failed!\n");
 			return;
@@ -650,7 +650,8 @@ void tests()
 
 		for (int i = 0; i < NUM_SCRATCHPADS_TEST; ++i)
 		{
-			fillAes1Rx4<false>(hash2 + i * 8, RANDOMX_SCRATCHPAD_L3, scratchpads.data() + RANDOMX_SCRATCHPAD_L3 * (NUM_SCRATCHPADS_TEST + i));
+			uint8_t* p = scratchpads.data() + (RANDOMX_SCRATCHPAD_L3 + 64) * (NUM_SCRATCHPADS_TEST + i);
+			fillAes1Rx4<false>(hash2 + i * 8, RANDOMX_SCRATCHPAD_L3, p);
 
 			if (memcmp(hash + i * 8, hash2 + i * 8, 64) != 0)
 			{
@@ -658,15 +659,10 @@ void tests()
 				return;
 			}
 
-			const uint8_t* p1 = scratchpads.data() + i * 64;
-			const uint8_t* p2 = scratchpads.data() + RANDOMX_SCRATCHPAD_L3 * (NUM_SCRATCHPADS_TEST + i);
-			for (int j = 0; j < RANDOMX_SCRATCHPAD_L3; j += 64)
+			if (memcmp(scratchpads.data() + (RANDOMX_SCRATCHPAD_L3 + 64) * i, p, RANDOMX_SCRATCHPAD_L3) != 0)
 			{
-				if (memcmp(p1 + j * NUM_SCRATCHPADS_TEST, p2 + j, 64) != 0)
-				{
-					fprintf(stderr, "fillAes1Rx4 test (scratchpad) failed!\n");
-					return;
-				}
+				fprintf(stderr, "fillAes1Rx4 test (scratchpad) failed!\n");
+				return;
 			}
 		}
 
@@ -708,7 +704,7 @@ void tests()
 	}
 	
 	{
-		hashAes1Rx4<RANDOMX_SCRATCHPAD_L3, 192, REGISTERS_SIZE><<<NUM_SCRATCHPADS_TEST / 32, 32 * 4>>>(scratchpads_gpu, registers_gpu, NUM_SCRATCHPADS_TEST);
+		hashAes1Rx4<RANDOMX_SCRATCHPAD_L3, 192, REGISTERS_SIZE, 64><<<NUM_SCRATCHPADS_TEST / 32, 32 * 4>>>(scratchpads_gpu, registers_gpu, NUM_SCRATCHPADS_TEST);
 
 		cudaStatus = cudaDeviceSynchronize();
 		if (cudaStatus != cudaSuccess) {
@@ -724,7 +720,7 @@ void tests()
 
 		for (int i = 0; i < NUM_SCRATCHPADS_TEST; ++i)
 		{
-			hashAes1Rx4<false>(scratchpads.data() + RANDOMX_SCRATCHPAD_L3 * (NUM_SCRATCHPADS_TEST + i), RANDOMX_SCRATCHPAD_L3, registers2 + REGISTERS_SIZE * i + 192);
+			hashAes1Rx4<false>(scratchpads.data() + (RANDOMX_SCRATCHPAD_L3 + 64) * (NUM_SCRATCHPADS_TEST + i), RANDOMX_SCRATCHPAD_L3, registers2 + REGISTERS_SIZE * i + 192);
 
 			if (memcmp(registers + i * REGISTERS_SIZE, registers2 + i * REGISTERS_SIZE, REGISTERS_SIZE) != 0)
 			{
@@ -806,7 +802,7 @@ void tests()
 
 		for (int j = 0; j < 10; ++j)
 		{
-			fillAes1Rx4<RANDOMX_SCRATCHPAD_L3, true><<<NUM_SCRATCHPADS_BENCH / 32, 32 * 4>>>(states_gpu, scratchpads_gpu, NUM_SCRATCHPADS_BENCH);
+			fillAes1Rx4<RANDOMX_SCRATCHPAD_L3, false, 64><<<NUM_SCRATCHPADS_BENCH / 32, 32 * 4>>>(states_gpu, scratchpads_gpu, NUM_SCRATCHPADS_BENCH);
 
 			cudaStatus = cudaGetLastError();
 			if (cudaStatus != cudaSuccess) {
@@ -837,7 +833,7 @@ void tests()
 
 		for (int j = 0; j < 10; ++j)
 		{
-			hashAes1Rx4<RANDOMX_SCRATCHPAD_L3, 0, 64><<<NUM_SCRATCHPADS_BENCH / 32, 32 * 4>>>(scratchpads_gpu, states_gpu, NUM_SCRATCHPADS_BENCH);
+			hashAes1Rx4<RANDOMX_SCRATCHPAD_L3, 0, 64, 64><<<NUM_SCRATCHPADS_BENCH / 32, 32 * 4>>>(scratchpads_gpu, states_gpu, NUM_SCRATCHPADS_BENCH);
 
 			cudaStatus = cudaGetLastError();
 			if (cudaStatus != cudaSuccess) {

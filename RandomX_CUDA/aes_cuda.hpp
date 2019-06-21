@@ -556,7 +556,7 @@ __device__ uint32_t get_byte(uint32_t a, uint32_t start_bit)
 	return result;
 }
 
-template<uint64_t outputSize, bool strided>
+template<uint64_t outputSize, bool strided, uint64_t gap = 0>
 __global__ void fillAes1Rx4(void* state, void* out, uint32_t batch_size)
 {
 	static_assert((outputSize % 128) == 0, "Output size must be a multiple of 128");
@@ -584,7 +584,7 @@ __global__ void fillAes1Rx4(void* state, void* out, uint32_t batch_size)
 	const uint32_t s1 = (sub & 1) ? 8 : 24;
 	const uint32_t s3 = (sub & 1) ? 24 : 8;
 
-	uint4* p = strided ? (((uint4*) out) + idx * 4 + sub) : (((uint4*)out) + idx * (outputSize / sizeof(uint4)) + sub);
+	uint4* p = strided ? (((uint4*) out) + idx * 4 + sub) : (((uint4*) out) + idx * ((outputSize + gap) / sizeof(uint4)) + sub);
 
 	const uint32_t* const t0 = (sub & 1) ? T : (T + 1024);
 	const uint32_t* const t1 = (sub & 1) ? (T + 256) : (T + 1792);
@@ -676,7 +676,7 @@ __global__ void fillAes4Rx4(void* state, void* out, uint32_t batch_size)
 	*(uint4*)(s) = *(uint4*)(x);
 }
 
-template<uint64_t inputSize, uint32_t hashOffsetBytes, uint32_t hashStrideBytes>
+template<uint64_t inputSize, uint32_t hashOffsetBytes, uint32_t hashStrideBytes, uint64_t gap = 0>
 __global__ void hashAes1Rx4(const void* input, void* hash, uint32_t batch_size)
 {
 	static_assert((inputSize % 512) == 0, "Input size must be a multiple of 512");
@@ -701,7 +701,7 @@ __global__ void hashAes1Rx4(const void* input, void* hash, uint32_t batch_size)
 	const uint32_t s1 = ((sub & 1) == 0) ? 8 : 24;
 	const uint32_t s3 = ((sub & 1) == 0) ? 24 : 8;
 
-	const uint4* p = ((uint4*) input) + idx * 4 + sub;
+	const uint4* p = ((uint4*) input) + idx * ((inputSize + gap) / sizeof(uint4)) + sub;
 
 	const uint32_t* const t0 = ((sub & 1) == 0) ? T : (T + 1024);
 	const uint32_t* const t1 = ((sub & 1) == 0) ? (T + 256) : (T + 1792);
@@ -711,7 +711,7 @@ __global__ void hashAes1Rx4(const void* input, void* hash, uint32_t batch_size)
 #define ITER(m) \
 	{ \
 		uint32_t k[4], y[4]; \
-		*(uint4*)(k) = p[m * stride_size]; \
+		*(uint4*)(k) = p[m * 4]; \
 		y[0] = t0[get_byte(x[0], 0)] ^ t1[get_byte(x[1], s1)] ^ t2[get_byte(x[2], 16)] ^ t3[get_byte(x[3], s3)] ^ k[0]; \
 		y[1] = t0[get_byte(x[1], 0)] ^ t1[get_byte(x[2], s1)] ^ t2[get_byte(x[3], 16)] ^ t3[get_byte(x[0], s3)] ^ k[1]; \
 		y[2] = t0[get_byte(x[2], 0)] ^ t1[get_byte(x[3], s1)] ^ t2[get_byte(x[0], 16)] ^ t3[get_byte(x[1], s3)] ^ k[2]; \
@@ -722,7 +722,7 @@ __global__ void hashAes1Rx4(const void* input, void* hash, uint32_t batch_size)
 		x[3] = y[3]; \
 	}
 
-	for (uint32_t i = 0; i < inputSize / sizeof(uint4); i += 8 * 4, p += stride_size * 8)
+	for (uint32_t i = 0; i < inputSize / sizeof(uint4); i += 8 * 4, p += 4 * 8)
 	{
 		ITER(0);
 		ITER(1);

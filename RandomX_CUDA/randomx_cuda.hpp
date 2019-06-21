@@ -1805,17 +1805,14 @@ __device__ void inner_loop(
 
 				uint32_t loc_shift;
 				asm("bfe.u32 %0, %1, 21, 5;" : "=r"(loc_shift) : "r"(imm.x));
-				const uint32_t mask = 0xFFFFFFFFU >> loc_shift;
+				const uint32_t mask = (0xFFFFFFFFU >> loc_shift) - 7;
 
 				const bool is_read = (opcode != 10);
 				uint32_t addr = is_read ? ((loc_shift == LOC_L3) ? 0 : static_cast<uint32_t>(src)) : static_cast<uint32_t>(dst);
 				addr += static_cast<int32_t>(imm.x);
 				addr &= mask;
 
-				uint64_t offset;
-				asm("mad.wide.u32 %0,%1,%2,%3;" : "=l"(offset) : "r"(addr & 0xFFFFFFC0U), "r"(batch_size), "l"(static_cast<uint64_t>(addr & 0x38)));
-
-				uint64_t* ptr = (uint64_t*)(scratchpad + offset);
+				uint64_t* ptr = (uint64_t*)(scratchpad + addr);
 
 				if (is_read)
 				{
@@ -1999,7 +1996,7 @@ __global__ void __launch_bounds__((WORKERS_PER_HASH == 16) ? 32 : 16, 16) execut
 	uint32_t spAddr0 = first ? mx : 0;
 	uint32_t spAddr1 = first ? ma : 0;
 
-	uint8_t* scratchpad = ((uint8_t*) scratchpads) + idx * 64;
+	uint8_t* scratchpad = ((uint8_t*) scratchpads) + idx * (RANDOMX_SCRATCHPAD_L3 + 64);
 
 	const bool f_group = (sub < 4);
 
@@ -2030,11 +2027,8 @@ __global__ void __launch_bounds__((WORKERS_PER_HASH == 16) ? 32 : 16, 16) execut
 			spAddr0 &= ScratchpadL3Mask64;
 			spAddr1 &= ScratchpadL3Mask64;
 
-			uint64_t offset1, offset2;
-			asm("mad.wide.u32 %0,%2,%4,%5;\n\tmad.wide.u32 %1,%3,%4,%5;" : "=l"(offset1), "=l"(offset2) : "r"(spAddr0), "r"(spAddr1), "r"(batch_size), "l"(static_cast<uint64_t>(sub * 8)));
-
-			p0 = (uint64_t*)(scratchpad + offset1);
-			p1 = (uint64_t*)(scratchpad + offset2);
+			p0 = (uint64_t*)(scratchpad + spAddr0 + sub * 8);
+			p1 = (uint64_t*)(scratchpad + spAddr1 + sub * 8);
 
 			r = R + sub;
 			*r ^= *p0;
