@@ -317,6 +317,13 @@ __device__ void print_inst(uint2 inst)
 		}
 		opcode -= RANDOMX_FREQ_IROR_R;
 
+		if (opcode < RANDOMX_FREQ_IROL_R)
+		{
+			printf("%s%sIROL_R   r%u, r%u    ", branch_target, fp_inst, dst, src);
+			break;
+		}
+		opcode -= RANDOMX_FREQ_IROL_R;
+
 		if (opcode < RANDOMX_FREQ_ISWAP_R)
 		{
 			printf("%s%sISWAP_R  r%u, r%u    ", branch_target, fp_inst, dst, src);
@@ -475,13 +482,13 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 			}
 			opcode -= RANDOMX_FREQ_IMUL_RCP;
 
-			if (opcode < RANDOMX_FREQ_INEG_R + RANDOMX_FREQ_IXOR_R + RANDOMX_FREQ_IXOR_M + RANDOMX_FREQ_IROR_R)
+			if (opcode < RANDOMX_FREQ_INEG_R + RANDOMX_FREQ_IXOR_R + RANDOMX_FREQ_IXOR_M + RANDOMX_FREQ_IROR_R + RANDOMX_FREQ_IROL_R)
 			{
 				set_byte(registerLastChanged, dst, i);
 				set_byte(registerWasChanged, dst, 1);
 				continue;
 			}
-			opcode -= RANDOMX_FREQ_INEG_R + RANDOMX_FREQ_IXOR_R + RANDOMX_FREQ_IXOR_M + RANDOMX_FREQ_IROR_R;
+			opcode -= RANDOMX_FREQ_INEG_R + RANDOMX_FREQ_IXOR_R + RANDOMX_FREQ_IXOR_M + RANDOMX_FREQ_IROR_R + RANDOMX_FREQ_IROL_R;
 
 			if (opcode < RANDOMX_FREQ_ISWAP_R)
 			{
@@ -703,12 +710,12 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				}
 				opcode -= RANDOMX_FREQ_IXOR_M;
 
-				if (opcode < RANDOMX_FREQ_IROR_R)
+				if (opcode < RANDOMX_FREQ_IROR_R + RANDOMX_FREQ_IROL_R)
 				{
 					latency = reg_read_latency;
 					break;
 				}
-				opcode -= RANDOMX_FREQ_IROR_R;
+				opcode -= RANDOMX_FREQ_IROR_R + RANDOMX_FREQ_IROL_R;
 
 				if (opcode < RANDOMX_FREQ_ISWAP_R)
 				{
@@ -1376,20 +1383,24 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 			}
 			opcode -= RANDOMX_FREQ_IXOR_M;
 
-			if (opcode < RANDOMX_FREQ_IROR_R)
+			if (opcode < RANDOMX_FREQ_IROR_R + RANDOMX_FREQ_IROL_R)
 			{
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (7 << OPCODE_OFFSET);
 				if (src == dst)
 				{
 					inst.x |= (imm_index << IMM_OFFSET) | (1 << SRC_IS_IMM32_OFFSET);
 					if (imm_index < IMM_INDEX_COUNT)
-						imm_buf[imm_index++] = inst.y;
+						imm_buf[imm_index++] = (opcode < RANDOMX_FREQ_IROR_R) ? inst.y : -inst.y;
+				}
+				else if (opcode >= RANDOMX_FREQ_IROR_R)
+				{
+					inst.x |= (1 << NEGATIVE_SRC_OFFSET);
 				}
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
 			}
-			opcode -= RANDOMX_FREQ_IROR_R;
+			opcode -= RANDOMX_FREQ_IROR_R + RANDOMX_FREQ_IROL_R;
 
 			if (opcode < RANDOMX_FREQ_ISWAP_R)
 			{
@@ -1848,7 +1859,7 @@ __device__ void inner_loop(
 				}
 				else if (opcode == 12)
 				{
-					asm("// FADD_R, FADD_M, FSUB_R, FSUB_M, FMUL_R (70/256) ------>");
+					asm("// FADD_R, FADD_M, FSUB_R, FSUB_M, FMUL_R (74/256) ------>");
 
 					if (location) src = bit_cast<uint64_t>(__int2double_rn(static_cast<int32_t>(src >> ((sub & 1) * 32))));
 					if (inst & (1 << NEGATIVE_SRC_OFFSET)) src ^= 0x8000000000000000ULL;
@@ -1859,7 +1870,7 @@ __device__ void inner_loop(
 
 					dst = bit_cast<uint64_t>(fma_rnd<ROUNDING_MODE>(a, is_mul ? b : 1.0, is_mul ? 0.0 : b, fprc));
 
-					asm("// <------ FADD_R, FADD_M, FSUB_R, FSUB_M, FMUL_R (70/256)");
+					asm("// <------ FADD_R, FADD_M, FSUB_R, FSUB_M, FMUL_R (74/256)");
 				}
 				else if (opcode == 9)
 				{
@@ -1873,16 +1884,12 @@ __device__ void inner_loop(
 				}
 				else if (opcode == 7)
 				{
-					asm("// IROR_R (10/256) ------>");
-					const uint32_t shift = src & 63;
-					dst = (dst >> shift) | (dst << (64 - shift));
-					asm("// <------ IROR_R (10/256)");
-				}
-				else if (opcode == 11)
-				{
-					asm("// FSWAP_R (8/256) ------>");
-					dst = __shfl_xor_sync(fp_workers_mask, dst, 1, 8);
-					asm("// <------ FSWAP_R (8/256)");
+					asm("// IROR_R, IROL_R (10/256) ------>");
+					const uint32_t shift1 = src & 63;
+					const uint32_t shift2 = 64 - shift1;
+					const bool is_rol = (inst & (1 << NEGATIVE_SRC_OFFSET));
+					dst = (dst >> (is_rol ? shift2 : shift1)) | (dst << (is_rol ? shift1 : shift2));
+					asm("// <------ IROR_R, IROL_R (10/256)");
 				}
 				else if (opcode == 14)
 				{
@@ -1901,6 +1908,12 @@ __device__ void inner_loop(
 					asm("// ISMULH_R, ISMULH_M (5/256) ------>");
 					dst = static_cast<uint64_t>(__mul64hi(static_cast<int64_t>(dst), static_cast<int64_t>(src)));
 					asm("// <------ ISMULH_R, ISMULH_M (5/256)");
+				}
+				else if (opcode == 11)
+				{
+					asm("// FSWAP_R (4/256) ------>");
+					dst = __shfl_xor_sync(fp_workers_mask, dst, 1, 8);
+					asm("// <------ FSWAP_R (8/256)");
 				}
 				else if (opcode == 8)
 				{
