@@ -1216,6 +1216,8 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				inst.x |= imm_index << IMM_OFFSET;
 				if (imm_index < IMM_INDEX_COUNT)
 					imm_buf[imm_index++] = (inst.y & 0xFC1FFFFFU) | (((location == 1) ? LOC_L1 : ((location == 2) ? LOC_L2 : LOC_L3)) << 21);
+				else
+					inst.x = INST_NOP;
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
@@ -1244,6 +1246,8 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				inst.x |= imm_index << IMM_OFFSET;
 				if (imm_index < IMM_INDEX_COUNT)
 					imm_buf[imm_index++] = (inst.y & 0xFC1FFFFFU) | (((location == 1) ? LOC_L1 : ((location == 2) ? LOC_L2 : LOC_L3)) << 21);
+				else
+					inst.x = INST_NOP;
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
@@ -1272,6 +1276,8 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				inst.x |= imm_index << IMM_OFFSET;
 				if (imm_index < IMM_INDEX_COUNT)
 					imm_buf[imm_index++] = (inst.y & 0xFC1FFFFFU) | (((location == 1) ? LOC_L1 : ((location == 2) ? LOC_L2 : LOC_L3)) << 21);
+				else
+					inst.x = INST_NOP;
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
@@ -1294,6 +1300,8 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				inst.x |= imm_index << IMM_OFFSET;
 				if (imm_index < IMM_INDEX_COUNT)
 					imm_buf[imm_index++] = (inst.y & 0xFC1FFFFFU) | (((location == 1) ? LOC_L1 : ((location == 2) ? LOC_L2 : LOC_L3)) << 21);
+				else
+					inst.x = INST_NOP;
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
@@ -1316,6 +1324,8 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				inst.x |= imm_index << IMM_OFFSET;
 				if (imm_index < IMM_INDEX_COUNT)
 					imm_buf[imm_index++] = (inst.y & 0xFC1FFFFFU) | (((location == 1) ? LOC_L1 : ((location == 2) ? LOC_L2 : LOC_L3)) << 21);
+				else
+					inst.x = INST_NOP;
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
@@ -1377,6 +1387,8 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				inst.x |= imm_index << IMM_OFFSET;
 				if (imm_index < IMM_INDEX_COUNT)
 					imm_buf[imm_index++] = (inst.y & 0xFC1FFFFFU) | (((location == 1) ? LOC_L1 : ((location == 2) ? LOC_L2 : LOC_L3)) << 21);
+				else
+					inst.x = INST_NOP;
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
@@ -1436,6 +1448,8 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				inst.x |= imm_index << IMM_OFFSET;
 				if (imm_index < IMM_INDEX_COUNT)
 					imm_buf[imm_index++] = (inst.y & 0xFC1FFFFFU) | (((location == 1) ? LOC_L1 : ((location == 2) ? LOC_L2 : LOC_L3)) << 21);
+				else
+					inst.x = INST_NOP;
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
@@ -1458,6 +1472,8 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				inst.x |= imm_index << IMM_OFFSET;
 				if (imm_index < IMM_INDEX_COUNT)
 					imm_buf[imm_index++] = (inst.y & 0xFC1FFFFFU) | (((location == 1) ? LOC_L1 : ((location == 2) ? LOC_L2 : LOC_L3)) << 21);
+				else
+					inst.x = INST_NOP;
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
@@ -1497,6 +1513,8 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				inst.x |= imm_index << IMM_OFFSET;
 				if (imm_index < IMM_INDEX_COUNT)
 					imm_buf[imm_index++] = (inst.y & 0xFC1FFFFFU) | (((location == 1) ? LOC_L1 : ((location == 2) ? LOC_L2 : LOC_L3)) << 21);
+				else
+					inst.x = INST_NOP;
 
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
@@ -1529,6 +1547,11 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 					imm_buf[imm_index + 1] = cshift | (static_cast<uint32_t>(branch_target_slot) << 5);
 					imm_index += 2;
 				}
+				else
+				{
+					// Data doesn't fit, skip it
+					inst.x = INST_NOP;
+				}
 
 				branch_target_slot = -1;
 
@@ -1553,6 +1576,8 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				inst.x |= imm_index << IMM_OFFSET;
 				if (imm_index < IMM_INDEX_COUNT)
 					imm_buf[imm_index++] = (inst.y & 0xFC1FFFFFU) | (((location == 1) ? LOC_L1 : ((location == 2) ? LOC_L2 : LOC_L3)) << 21);
+				else
+					inst.x = INST_NOP;
 				*(compiled_program++) = inst.x | num_workers;
 				continue;
 			}
