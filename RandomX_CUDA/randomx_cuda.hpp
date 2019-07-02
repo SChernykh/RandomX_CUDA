@@ -1141,6 +1141,7 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 
 		uint32_t* imm_buf = (uint32_t*)(R + REGISTERS_SIZE / sizeof(uint64_t));
 		uint32_t imm_index = 0;
+		int32_t imm_index_fscal_r = -1;
 		uint32_t* compiled_program = (uint32_t*)(R + (REGISTERS_SIZE + IMM_BUF_SIZE) / sizeof(uint64_t));
 
 		// Generate opcodes for execute_vm
@@ -1400,9 +1401,8 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 				inst.x = (dst << DST_OFFSET) | (src << SRC_OFFSET) | (7 << OPCODE_OFFSET);
 				if (src == dst)
 				{
-					inst.x |= (imm_index << IMM_OFFSET) | (1 << SRC_IS_IMM32_OFFSET);
-					if (imm_index < IMM_INDEX_COUNT)
-						imm_buf[imm_index++] = (opcode < RANDOMX_FREQ_IROR_R) ? inst.y : -inst.y;
+					const uint32_t shift = static_cast<uint32_t>((opcode < RANDOMX_FREQ_IROR_R) ? inst.y : -inst.y) & 63;
+					inst.x |= (shift << IMM_OFFSET);
 				}
 				else if (opcode >= RANDOMX_FREQ_IROR_R)
 				{
@@ -1483,13 +1483,21 @@ __global__ void __launch_bounds__(32, 16) init_vm(void* entropy_data, void* vm_s
 			if (opcode < RANDOMX_FREQ_FSCAL_R)
 			{
 				inst.x = ((dst % randomx::RegisterCountFlt) << DST_OFFSET) | (1 << SRC_IS_IMM64_OFFSET) | (3 << OPCODE_OFFSET);
-				inst.x |= (imm_index << IMM_OFFSET);
-
-				if (imm_index < IMM_INDEX_COUNT - 1)
+				if (imm_index_fscal_r >= 0)
 				{
-					imm_buf[imm_index] = 0;
-					imm_buf[imm_index + 1] = 0x80F00000UL;
-					imm_index += 2;
+					inst.x |= (imm_index_fscal_r << IMM_OFFSET);
+				}
+				else
+				{
+					imm_index_fscal_r = imm_index;
+					inst.x |= (imm_index << IMM_OFFSET);
+
+					if (imm_index < IMM_INDEX_COUNT - 1)
+					{
+						imm_buf[imm_index] = 0;
+						imm_buf[imm_index + 1] = 0x80F00000UL;
+						imm_index += 2;
+					}
 				}
 
 				*(compiled_program++) = inst.x | num_workers;
@@ -1910,7 +1918,8 @@ __device__ void inner_loop(
 				else if (opcode == 7)
 				{
 					asm("// IROR_R, IROL_R (10/256) ------>");
-					const uint32_t shift1 = src & 63;
+					uint32_t shift1 = src & 63;
+					if (src_offset == dst_offset) shift1 = imm_offset;
 					const uint32_t shift2 = 64 - shift1;
 					const bool is_rol = (inst & (1 << NEGATIVE_SRC_OFFSET));
 					dst = (dst >> (is_rol ? shift2 : shift1)) | (dst << (is_rol ? shift1 : shift2));
