@@ -24,6 +24,7 @@ constexpr size_t HASH_SIZE = 64;
 constexpr size_t ENTROPY_SIZE = 128 + RANDOMX_PROGRAM_SIZE * 8;
 constexpr size_t REGISTERS_SIZE = 256;
 constexpr size_t IMM_BUF_SIZE = RANDOMX_PROGRAM_SIZE * 4 - REGISTERS_SIZE;
+constexpr size_t IMM_INDEX_COUNT = (IMM_BUF_SIZE / 4) - 2;
 constexpr size_t VM_STATE_SIZE = REGISTERS_SIZE + IMM_BUF_SIZE + RANDOMX_PROGRAM_SIZE * 4;
 
 constexpr uint32_t CacheLineSize = 64;
@@ -140,8 +141,6 @@ template<> struct get_power_of_2<1> { enum { Value = 0 }; };
 #define LOC_L1 (32 - get_power_of_2<RANDOMX_SCRATCHPAD_L1>::Value)
 #define LOC_L2 (32 - get_power_of_2<RANDOMX_SCRATCHPAD_L2>::Value)
 #define LOC_L3 (32 - get_power_of_2<RANDOMX_SCRATCHPAD_L3>::Value)
-
-#define IMM_INDEX_COUNT 190
 
 __device__ uint64_t imul_rcp_value(uint32_t divisor)
 {
@@ -1838,12 +1837,12 @@ __device__ void inner_loop(
 )
 {
 	const int32_t sub2 = sub >> 1;
-	imm_buf[191] = fprc;
+	imm_buf[IMM_INDEX_COUNT + 1] = fprc;
 
 	#pragma unroll(1)
 	for (int32_t ip = 0; ip < program_length;)
 	{
-		imm_buf[190] = ip;
+		imm_buf[IMM_INDEX_COUNT] = ip;
 
 		uint32_t inst = compiled_program[ip];
 		const int32_t num_workers = (inst >> NUM_INSTS_OFFSET) & (WORKERS_PER_HASH - 1);
@@ -1957,7 +1956,7 @@ __device__ void inner_loop(
 					dst += static_cast<int32_t>(imm.x);
 					if ((static_cast<uint32_t>(dst) & (randomx::ConditionMask << (imm.y & 31))) == 0)
 					{
-						imm_buf[190] = static_cast<uint32_t>((static_cast<int32_t>(imm.y) >> 5) - num_insts);
+						imm_buf[IMM_INDEX_COUNT] = static_cast<uint32_t>((static_cast<int32_t>(imm.y) >> 5) - num_insts);
 					}
 					asm("// <------ CBRANCH (16/256)");
 				}
@@ -2024,7 +2023,7 @@ __device__ void inner_loop(
 				else if (ROUNDING_MODE < 0)
 				{
 					asm("// CFROUND (1/256) ------>");
-					imm_buf[191] = ((src >> imm_offset) | (src << (64 - imm_offset))) & 3;
+					imm_buf[IMM_INDEX_COUNT + 1] = ((src >> imm_offset) | (src << (64 - imm_offset))) & 3;
 					asm("// <------ CFROUND (1/256)");
 					goto execution_end;
 				}
@@ -2039,8 +2038,8 @@ __device__ void inner_loop(
 			asm("// SYNCHRONIZATION OF INSTRUCTION POINTER AND ROUNDING MODE BEGIN");
 
 			__syncwarp(workers_mask);
-			ip = imm_buf[190];
-			fprc = imm_buf[191];
+			ip = imm_buf[IMM_INDEX_COUNT];
+			fprc = imm_buf[IMM_INDEX_COUNT + 1];
 
 			asm("// SYNCHRONIZATION OF INSTRUCTION POINTER AND ROUNDING MODE END");
 
