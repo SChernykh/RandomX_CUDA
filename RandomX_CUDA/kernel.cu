@@ -190,8 +190,8 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp,
 		return false;
 	}
 
-	uint32_t batch_size = (intensity >= 32) ? intensity : static_cast<uint32_t>((free_mem - dataset_size - (64U << 20)) / (RANDOMX_SCRATCHPAD_L3 + 64));
-	batch_size = static_cast<uint32_t>(batch_size / 32) * 32;
+	uint64_t batch_size = (intensity >= 32) ? intensity : ((free_mem - dataset_size - (64U << 20)) / (RANDOMX_SCRATCHPAD_L3 + 64));
+	batch_size = (batch_size / 32) * 32;
 
 	GPUPtr dataset_gpu(dataset_size);
 	if (!dataset_gpu)
@@ -246,7 +246,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp,
 		return false;
 	}
 
-	printf("Allocated %u scratchpads\n", batch_size);
+	printf("Allocated %llu scratchpads\n", batch_size);
 
 	GPUPtr hashes_gpu(batch_size * HASH_SIZE);
 	if (!hashes_gpu)
