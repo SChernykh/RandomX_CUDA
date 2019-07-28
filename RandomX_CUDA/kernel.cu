@@ -190,7 +190,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp,
 		return false;
 	}
 
-	uint64_t batch_size = (intensity >= 32) ? intensity : ((free_mem - dataset_size - (64U << 20)) / (RANDOMX_SCRATCHPAD_L3 + 64));
+	uint32_t batch_size = (intensity >= 32) ? intensity : ((free_mem - dataset_size - (64U << 20)) / (RANDOMX_SCRATCHPAD_L3 + 64));
 	batch_size = (batch_size / 32) * 32;
 
 	GPUPtr dataset_gpu(dataset_size);
@@ -239,14 +239,14 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp,
 		printf("done in %.3f seconds\n", duration_cast<nanoseconds>(high_resolution_clock::now() - t1).count() / 1e9);
 	}
 
-	GPUPtr scratchpads_gpu(batch_size * (RANDOMX_SCRATCHPAD_L3 + 64));
+	GPUPtr scratchpads_gpu(batch_size * static_cast<uint64_t>(RANDOMX_SCRATCHPAD_L3 + 64));
 	if (!scratchpads_gpu)
 	{
 		fprintf(stderr, "Failed to allocate GPU memory for scratchpads!\n");
 		return false;
 	}
 
-	printf("Allocated %llu scratchpads\n", batch_size);
+	printf("Allocated %u scratchpads\n", batch_size);
 
 	GPUPtr hashes_gpu(batch_size * HASH_SIZE);
 	if (!hashes_gpu)
@@ -307,7 +307,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp,
 
 	printf("%zu MB free GPU memory left\n", free_mem >> 20);
 
-	for (auto p : { init_vm<2>, init_vm<4>, init_vm<8>, init_vm<16> })
+	for (const void* p : { init_vm<2>, init_vm<4>, init_vm<8>, init_vm<16> })
 	{
 		cudaStatus = cudaFuncSetCacheConfig(p, cudaFuncCachePreferShared);
 		if (cudaStatus != cudaSuccess)
@@ -317,7 +317,7 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp,
 		}
 	}
 
-	for (auto p : { execute_vm<2, false>, execute_vm<4, false>, execute_vm<8, false>, execute_vm<16, false>, execute_vm<2, true>, execute_vm<4, true>, execute_vm<8, true>, execute_vm<16, true> })
+	for (const void* p : { execute_vm<2, false>, execute_vm<4, false>, execute_vm<8, false>, execute_vm<16, false>, execute_vm<2, true>, execute_vm<4, true>, execute_vm<8, true>, execute_vm<16, true> })
 	{
 		cudaStatus = cudaFuncSetCacheConfig(p, cudaFuncCachePreferShared);
 		if (cudaStatus != cudaSuccess)
