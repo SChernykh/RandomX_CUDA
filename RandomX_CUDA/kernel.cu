@@ -36,7 +36,7 @@ along with RandomX CUDA.  If not, see<http://www.gnu.org/licenses/>.
 #include "aes_cuda.hpp"
 #include "randomx_cuda.hpp"
 
-bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp, uint32_t start_nonce, uint32_t intensity);
+bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp, uint32_t start_nonce, uint32_t intensity, bool dataset_host);
 void tests();
 
 int main(int argc, char** argv)
@@ -73,6 +73,7 @@ int main(int argc, char** argv)
 	uint32_t start_nonce = 0;
 	uint32_t intensity = 0;
 	bool fast_fp = false;
+	bool dataset_host = false;
 	for (int i = 0; i < argc; ++i)
 	{
 		if (strcmp(argv[i], "--validate") == 0)
@@ -117,10 +118,15 @@ int main(int argc, char** argv)
 		{
 			fast_fp = true;
 		}
+
+		if ((strcmp(argv[i], "--dataset_host") == 0))
+		{
+			dataset_host = true;
+		}
 	}
 
 	if (strcmp(argv[1], "--mine") == 0)
-		test_mining(validate, bfactor, workers_per_hash, fast_fp, start_nonce, intensity);
+		test_mining(validate, bfactor, workers_per_hash, fast_fp, start_nonce, intensity, dataset_host);
 	else if (strcmp(argv[1], "--test") == 0)
 		tests();
 
@@ -162,9 +168,9 @@ private:
 	void* p;
 };
 
-bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp, uint32_t start_nonce, uint32_t intensity)
+bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp, uint32_t start_nonce, uint32_t intensity, bool dataset_host)
 {
-	printf("Testing mining: CPU validation is %s, bfactor is %d, %d workers per hash%s, start nonce %u, intensity %u\n", validate ? "ON" : "OFF", bfactor, workers_per_hash, fast_fp ? ", fast FP" : "", start_nonce, intensity);
+	printf("Testing mining: CPU validation is %s, bfactor is %d, %d workers per hash%s, start nonce %u, intensity %u, dataset on %s\n", validate ? "ON" : "OFF", bfactor, workers_per_hash, fast_fp ? ", fast FP" : "", start_nonce, intensity, dataset_host ? "host" : "GPU");
 
 	cudaError_t cudaStatus;
 
@@ -184,23 +190,30 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp,
 
 	// There should be enough GPU memory for the 2080 MB dataset, 32 scratchpads and 64 MB for everything else
 	const size_t dataset_size = randomx_dataset_item_count() * RANDOMX_DATASET_ITEM_SIZE;
-	if (free_mem <= dataset_size + (32U * (RANDOMX_SCRATCHPAD_L3 + 64)) + (64U << 20))
+	if (free_mem <= (dataset_host ? 0 : dataset_size) + (32U * (RANDOMX_SCRATCHPAD_L3 + 64)) + (64U << 20))
 	{
 		fprintf(stderr, "Not enough free GPU memory!\n");
 		return false;
 	}
 
-	uint32_t batch_size = (intensity >= 32) ? intensity : ((free_mem - dataset_size - (64U << 20)) / (RANDOMX_SCRATCHPAD_L3 + 64));
+	uint32_t batch_size = (intensity >= 32) ? intensity : ((free_mem - (dataset_host ? 0 : dataset_size) - (64U << 20)) / (RANDOMX_SCRATCHPAD_L3 + 64));
 	batch_size = (batch_size / 32) * 32;
 
-	GPUPtr dataset_gpu(dataset_size);
-	if (!dataset_gpu)
+	void* dataset_gpu = nullptr;
+	if (dataset_host)
 	{
-		fprintf(stderr, "Failed to allocate GPU memory for dataset!\n");
-		return false;
+		printf("Using host-allocated %.0f MB dataset\n", dataset_size / 1048576.0);
 	}
+	else
+	{
+		cudaStatus = cudaMalloc(&dataset_gpu, dataset_size);
+		if (cudaStatus != cudaSuccess) {
+			fprintf(stderr, "Failed to allocate dataset: %s\n", cudaGetErrorString(cudaStatus));
+			return false;
+		}
 
-	printf("Allocated %.0f MB dataset\n", dataset_size / 1048576.0);
+		printf("Allocated %.0f MB dataset\n", dataset_size / 1048576.0);
+	}
 
 	printf("Initializing dataset...");
 
@@ -230,10 +243,27 @@ bool test_mining(bool validate, int bfactor, int workers_per_hash, bool fast_fp,
 
 		randomx_release_cache(myCache);
 
-		cudaStatus = cudaMemcpy(dataset_gpu, randomx_get_dataset_memory(myDataset), dataset_size, cudaMemcpyHostToDevice);
-		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "Failed to copy dataset to GPU: %s\n", cudaGetErrorString(cudaStatus));
-			return false;
+		if (dataset_host)
+		{
+			cudaStatus = cudaHostRegister(randomx_get_dataset_memory(myDataset), dataset_size, cudaHostRegisterPortable | cudaHostRegisterMapped);
+			if (cudaStatus != cudaSuccess) {
+				fprintf(stderr, "Failed to register dataset for use by CUDA: %s\n", cudaGetErrorString(cudaStatus));
+				return false;
+			}
+
+			cudaStatus = cudaHostGetDevicePointer(&dataset_gpu, randomx_get_dataset_memory(myDataset), 0);
+			if (cudaStatus != cudaSuccess) {
+				fprintf(stderr, "Failed to get device pointer for dataset: %s\n", cudaGetErrorString(cudaStatus));
+				return false;
+			}
+		}
+		else
+		{
+			cudaStatus = cudaMemcpy(dataset_gpu, randomx_get_dataset_memory(myDataset), dataset_size, cudaMemcpyHostToDevice);
+			if (cudaStatus != cudaSuccess) {
+				fprintf(stderr, "Failed to copy dataset to GPU: %s\n", cudaGetErrorString(cudaStatus));
+				return false;
+			}
 		}
 
 		printf("done in %.3f seconds\n", duration_cast<nanoseconds>(high_resolution_clock::now() - t1).count() / 1e9);
