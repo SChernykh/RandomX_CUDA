@@ -65,7 +65,7 @@ int main(int argc, char** argv)
 
 	uint32_t flags;
 	if (cudaGetDeviceFlags(&flags) == cudaSuccess)
-		cudaSetDeviceFlags(flags | cudaDeviceScheduleBlockingSync);
+		cudaSetDeviceFlags(flags | cudaDeviceScheduleBlockingSync | cudaDeviceMapHost);
 
 	bool validate = false;
 	int bfactor = 0;
