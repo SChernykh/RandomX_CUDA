@@ -8,6 +8,7 @@ GPUs tested so far:
 
 Model|CryptonightR H/S|RandomX H/S|Relative speed
 -----|---------------|-----------|--------------
+GTX 1050 2GB (stock)|299 (75 W)|181 (75 W)|60.5%
 GTX 1660 Ti max overclock (2070/13760 MHz)|626 (98 W)|671 (103 W)|107.2%
 GTX 1660 Ti low power (1785/13760 MHz)|604 (70 W)|567 (70 W)|93.9%
 GTX 1070 (1850/7600 MHz) [[1]](https://termbin.com/g2z7)|612 (89 W)|609 (108 W)|99.5%
