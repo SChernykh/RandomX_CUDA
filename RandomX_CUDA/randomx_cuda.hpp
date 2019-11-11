@@ -2044,6 +2044,7 @@ __device__ void inner_loop(
 #			if (__CUDA_ARCH__ >= 300)
 			asm("bar.warp.sync %0;" :: "r"(workers_mask));
 #			endif
+
 			ip = imm_buf[IMM_INDEX_COUNT];
 			fprc = imm_buf[IMM_INDEX_COUNT + 1];
 
